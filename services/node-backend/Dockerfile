@@ -36,8 +36,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Expose port
 EXPOSE 3000
 
-# Set environment
-ENV NODE_ENV=development
+# NODE_ENV is intentionally NOT set here.
+# It must be provided at runtime via the environment (docker-compose / Kubernetes Secret).
+# The application will use 'production' semantics when NODE_ENV=production is passed in,
+# which suppresses stack traces in API error responses.
+# Default in config/index.js is 'development' for local safety.
 
 # Start application
 CMD ["node", "src/index.js"]

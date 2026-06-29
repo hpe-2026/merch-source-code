@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
 
     # Database
+    # Default matches the node-backend default and the sharding-init.js script.
+    # Both services MUST point to the same database — override via MONGODB_URL / DATABASE_NAME.
     MONGODB_URL: str = "mongodb://mongodb:27017/nitte_merch"
     DATABASE_NAME: str = "nitte_merch"
 

@@ -14,7 +14,8 @@ class KeycloakConfig {
     this.serverUrl = process.env.KEYCLOAK_SERVER_URL || 'http://keycloak:8080';
     this.realm = process.env.KEYCLOAK_REALM || 'nitte-realm';
     this.clientId = process.env.KEYCLOAK_CLIENT_ID || 'nitte-client';
-    this.clientSecret = process.env.KEYCLOAK_CLIENT_SECRET || 'nitte-client-secret';
+    // No default — config/index.js enforces this is set at startup
+    this.clientSecret = process.env.KEYCLOAK_CLIENT_SECRET;
 
     // Cache for public key (JWKS)
     this.cachedPublicKey = null;

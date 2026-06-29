@@ -24,7 +24,7 @@ async function getAdminToken() {
       new URLSearchParams({
         grant_type: 'client_credentials',
         client_id: process.env.KEYCLOAK_CLIENT_ID || 'nitte-client',
-        client_secret: process.env.KEYCLOAK_CLIENT_SECRET || 'nitte-client-secret',
+        client_secret: process.env.KEYCLOAK_CLIENT_SECRET,
       }),
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );

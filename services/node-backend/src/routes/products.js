@@ -98,7 +98,9 @@ const optionalAuthMiddleware = async (req, res, next) => {
     
     // Try simple JWT verification first
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret-key-change-in-production');
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) throw new Error('JWT_SECRET not set');
+      const decoded = jwt.verify(token, jwtSecret);
       req.user = {
         ...decoded,
         roles: decoded.roles || (decoded.role ? [decoded.role] : ['user']),

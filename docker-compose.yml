@@ -1,0 +1,613 @@
+# =============================================================================
+# NITTE Merchandise Shop — Local Development Stack
+# =============================================================================
+#
+# PURPOSE:
+#   This file starts the complete application stack for LOCAL DEVELOPMENT only.
+#   It is NEVER used in production. Production runs on Kubernetes via ArgoCD.
+#
+# WHAT IS INCLUDED:
+#   Infrastructure : MongoDB, Kafka, Zookeeper, Keycloak, MinIO, Jaeger
+#   Applications   : node-backend, python-service, notification-service
+#   Frontends      : frontend, admin-dashboard, merchant-portal
+#
+# WHAT IS NOT INCLUDED (belongs to Kubernetes / Admin cluster only):
+#   Jenkins, Nexus, ArgoCD, MetalLB, Istio, Prometheus, Grafana, Loki,
+#   Alertmanager — these are platform concerns, not application concerns.
+#
+# HOW TO START:
+#   1. Copy .env.example to .env in each service directory and fill in secrets.
+#      At minimum set JWT_SECRET and KEYCLOAK_CLIENT_SECRET.
+#   2. Run: docker compose up --build
+#
+# HOW TO STOP:
+#   docker compose down
+#
+# HOW TO WIPE ALL DATA (volumes):
+#   docker compose down -v
+#
+# SERVICE URLS (after startup):
+#   Frontend         : http://localhost:5173
+#   Admin Dashboard  : http://localhost:5174
+#   Merchant Portal  : http://localhost:5175
+#   API (node)       : http://localhost:3000
+#   API Docs         : http://localhost:3000/api/docs
+#   Python Service   : http://localhost:8000
+#   Keycloak Admin   : http://localhost:8080  (admin / admin_password)
+#   MinIO Console    : http://localhost:9001  (minioadmin / change-this-minio-secret)
+#   Jaeger UI        : http://localhost:16686
+#   Kafka UI         : http://localhost:8090
+#   MongoDB          : localhost:27017
+#
+# STARTUP ORDER:
+#   Infra first (MongoDB, Kafka, Keycloak, MinIO, Jaeger) → then backends → then frontends.
+#   Docker Compose healthchecks enforce this ordering via depends_on conditions.
+#
+# =============================================================================
+
+# Network: all services on one bridge network so they can reach each other
+# by service name (e.g. node-backend calls http://python-service:8000).
+# This mirrors how Kubernetes DNS-based service discovery works.
+networks:
+  nitte-net:
+    driver: bridge
+
+# Named volumes for persistent data.
+# Data survives docker compose stop/start but is wiped by docker compose down -v.
+volumes:
+  mongodb-data:
+  zookeeper-data:
+  kafka-data:
+  keycloak-data:
+  minio-data:
+
+# =============================================================================
+# INFRASTRUCTURE SERVICES
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # MongoDB — primary database for both node-backend and python-service.
+  #
+  # WHY ONE INSTANCE FOR DEV?
+  #   Running a full replica set or sharded cluster locally adds significant
+  #   complexity. A standalone instance is correct for development.
+  #   The sharding-init.js script in /database is for the production Kubernetes
+  #   deployment only (runs against a mongos router, not a standalone mongod).
+  #
+  # DATABASE NAME: nitte_merch
+  #   Both node-backend and python-service MUST use the same database name.
+  #   This is enforced in their .env files and config files.
+  # ---------------------------------------------------------------------------
+  mongodb:
+    image: mongo:7.0
+    container_name: nitte-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_ROOT_PASSWORD:-change-this-mongo-root-password}
+      MONGO_INITDB_DATABASE: nitte_merch
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Zookeeper — required by Kafka for cluster coordination.
+  #
+  # WHY ZOOKEEPER AND NOT KRAFT (KIP-500)?
+  #   The Confluent Platform images used here still default to Zookeeper mode.
+  #   KRaft (Zookeeper-free) is production-ready in Kafka 3.3+. For a learning
+  #   platform, Zookeeper is fine and shows you the full traditional Kafka stack.
+  #   When you move to Kubernetes you will use the Strimzi operator which
+  #   supports both modes.
+  # ---------------------------------------------------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: nitte-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Kafka — event streaming backbone.
+  #
+  # Used by:
+  #   node-backend: publishes user-registration, order, product events
+  #   notification-service: consumes those events to send emails/Slack/SMS
+  #
+  # LISTENER CONFIGURATION (important):
+  #   KAFKA_ADVERTISED_LISTENERS has two entries:
+  #   - INTERNAL://kafka:29092  → used by other Docker containers (by service name)
+  #   - EXTERNAL://localhost:9092 → used by tools running on your laptop host
+  #   Services inside Docker Compose must use kafka:29092, NOT localhost:9092.
+  #   This is why KAFKA_BROKERS=kafka:29092 in the service env vars below.
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: nitte-kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9092:9092"       # Host access for local tools / debugging
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Kafka UI — browser-based Kafka topic / consumer group inspector.
+  #
+  # WHY IS THIS HERE?
+  #   Kafka is opaque without tooling. During development you need to verify
+  #   that messages are being produced and consumed correctly. This UI shows
+  #   you exactly what is happening on every topic — critical for debugging
+  #   the notification-service and order event flows.
+  #
+  # Access: http://localhost:8090
+  # ---------------------------------------------------------------------------
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: nitte-kafka-ui
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: nitte-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    ports:
+      - "8090:8080"
+    networks:
+      - nitte-net
+
+  # ---------------------------------------------------------------------------
+  # Keycloak — Identity and Access Management (IAM).
+  #
+  # Used by:
+  #   node-backend: validates RS256 JWTs, creates/manages users via Admin API
+  #   notification-service: receives Keycloak events via POST /api/v1/events
+  #   All frontends: redirect to Keycloak for login (OIDC / Authorization Code flow)
+  #
+  # DEV SETUP:
+  #   The realm, client, and roles must be configured after first startup.
+  #   See README.md section "Keycloak Setup" for the manual steps, or import
+  #   the realm JSON at keycloak/nitte-realm.json once it exists.
+  #
+  # ADMIN CREDENTIALS:
+  #   Username: admin
+  #   Password: set via KEYCLOAK_ADMIN_PASSWORD env var (see below)
+  #
+  # Access: http://localhost:8080
+  # ---------------------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.3
+    container_name: nitte-keycloak
+    restart: unless-stopped
+    command: start-dev
+    environment:
+      KC_DB: dev-mem          # In-memory H2 for dev (no Postgres needed locally)
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_password}
+      KC_HTTP_PORT: 8080
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+      # Do not enforce HTTPS in dev — TLS termination happens at the Ingress in Kubernetes
+    ports:
+      - "8080:8080"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s    # Keycloak is slow to start — give it time
+
+  # ---------------------------------------------------------------------------
+  # MinIO — S3-compatible object storage for user avatars and product images.
+  #
+  # Used by node-backend for:
+  #   - User avatar uploads    → nitte-users bucket
+  #   - Product image uploads  → nitte-products bucket
+  #
+  # Two ports:
+  #   9000: S3 API (used by node-backend S3 SDK)
+  #   9001: MinIO Web Console (for you to browse buckets visually)
+  #
+  # Access: http://localhost:9001  (minioadmin / change-this-minio-secret)
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:RELEASE.2024-03-26T22-10-45Z
+    container_name: nitte-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-this-minio-secret}
+    ports:
+      - "9000:9000"    # S3 API
+      - "9001:9001"    # Web console
+    volumes:
+      - minio-data:/data
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # MinIO bucket initializer — creates required buckets on first startup.
+  # Uses the mc (MinIO Client) CLI. Runs once and exits.
+  minio-init:
+    image: minio/mc:RELEASE.2024-03-20T21-07-29Z
+    container_name: nitte-minio-init
+    restart: "no"     # Run once only
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - nitte-net
+    entrypoint: |
+      /bin/sh -c "
+        mc alias set local http://minio:9000 minioadmin '${MINIO_ROOT_PASSWORD:-change-this-minio-secret}'
+        mc mb --ignore-existing local/nitte-users
+        mc mb --ignore-existing local/nitte-products
+        mc anonymous set download local/nitte-products
+        echo 'MinIO buckets initialized.'
+      "
+
+  # ---------------------------------------------------------------------------
+  # Jaeger — distributed tracing backend.
+  #
+  # Both node-backend (via OpenTelemetry OTLP HTTP on port 4318) and
+  # python-service (via Jaeger Thrift UDP on port 6831) send traces here.
+  #
+  # The all-in-one image includes collector, query, and UI in a single binary —
+  # appropriate for development. In production, these are separate components.
+  #
+  # Ports:
+  #   6831 UDP — Jaeger Thrift Compact (python-service)
+  #   4318     — OTLP HTTP (node-backend via OpenTelemetry SDK)
+  #   16686    — Jaeger Query UI
+  #
+  # Access: http://localhost:16686
+  # ---------------------------------------------------------------------------
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: nitte-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "6831:6831/udp"   # Jaeger Thrift UDP (python-service)
+      - "4317:4317"       # OTLP gRPC
+      - "4318:4318"       # OTLP HTTP (node-backend)
+      - "16686:16686"     # Jaeger Query UI
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:16686/api/services || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+# =============================================================================
+# APPLICATION SERVICES
+# =============================================================================
+
+  # ---------------------------------------------------------------------------
+  # node-backend — Express.js API Gateway (port 3000)
+  #
+  # This is the primary backend. All frontend applications talk to this service.
+  # It handles authentication, business logic, Kafka events, MinIO uploads,
+  # and proxies catalog/order reads to python-service.
+  #
+  # CRITICAL: JWT_SECRET and KEYCLOAK_CLIENT_SECRET are REQUIRED.
+  # The app will refuse to start if either is missing (enforced in config/index.js).
+  # ---------------------------------------------------------------------------
+  node-backend:
+    build:
+      context: ./services/node-backend
+      dockerfile: Dockerfile
+    container_name: nitte-node-backend
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+
+      # Database — must match python-service DATABASE_NAME
+      MONGODB_URL: mongodb://admin:${MONGODB_ROOT_PASSWORD:-change-this-mongo-root-password}@mongodb:27017/nitte_merch?authSource=admin
+
+      # Security — REQUIRED. Set these in your .env file.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env — see .env.example}
+      JWT_EXPIRY: 7d
+
+      # Inter-service communication (by Docker Compose service name)
+      PYTHON_SERVICE_URL: http://python-service:8000
+      KAFKA_BROKERS: kafka:29092
+
+      # Keycloak — KEYCLOAK_CLIENT_SECRET is REQUIRED. Set in .env file.
+      KEYCLOAK_SERVER_URL: http://keycloak:8080
+      KEYCLOAK_REALM: nitte-realm
+      KEYCLOAK_CLIENT_ID: nitte-client
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?KEYCLOAK_CLIENT_SECRET must be set in .env}
+
+      # MinIO / S3
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change-this-minio-secret}
+      S3_BUCKET_NAME: nitte-users
+      S3_PRODUCTS_BUCKET: nitte-products
+
+      # Tracing — OTLP HTTP to Jaeger
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      JAEGER_HOST: jaeger
+
+      # CORS — all three frontends allowed in development
+      CORS_ORIGINS: http://localhost:5173,http://localhost:5174,http://localhost:5175
+
+      LOG_LEVEL: info
+      REQUEST_TIMEOUT: 30000
+    ports:
+      - "3000:3000"
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # python-service — FastAPI catalog and orders microservice (port 8000)
+  #
+  # Handles product catalog reads and order persistence via Motor (async MongoDB).
+  # node-backend proxies catalog requests here via pythonServiceClient.js.
+  #
+  # DATABASE NAME must match node-backend (nitte_merch).
+  # ---------------------------------------------------------------------------
+  python-service:
+    build:
+      context: ./services/python-service
+      dockerfile: Dockerfile
+    container_name: nitte-python-service
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: development
+      PORT: 8000
+      HOST: 0.0.0.0
+
+      # Database — same database as node-backend
+      MONGODB_URL: mongodb://admin:${MONGODB_ROOT_PASSWORD:-change-this-mongo-root-password}@mongodb:27017
+      DATABASE_NAME: nitte_merch
+
+      # API Gateway URL — for service-to-service calls back to node-backend
+      API_GATEWAY_URL: http://node-backend:3000
+
+      # Jaeger — Thrift UDP to Jaeger agent port 6831
+      # JAEGER_AGENT_HOST defaults to 'nitte-jaeger' in code but we override
+      # it to 'jaeger' which is the actual Docker Compose service name.
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+
+      LOG_LEVEL: info
+    ports:
+      - "8000:8000"
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # notification-service — Kafka consumer for notifications (port 9100)
+  #
+  # Consumes events from Kafka (user approved/rejected, orders, Keycloak events)
+  # and dispatches notifications via email, Slack, or SMS.
+  #
+  # In development, EMAIL_PROVIDER=console means notifications are logged to
+  # stdout instead of actually sending emails — safe for local testing.
+  # ---------------------------------------------------------------------------
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: nitte-notification-service
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+
+      # Kafka
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_CLIENT_ID: notification-service
+      KAFKA_CONSUMER_GROUP: notification-service
+
+      # Email — 'console' logs to stdout in development (no real emails sent)
+      EMAIL_ENABLED: "true"
+      EMAIL_PROVIDER: console
+
+      # Slack — disabled in development
+      SLACK_ENABLED: "false"
+      SLACK_WEBHOOK_URL: ""
+
+      # Ticket system — console mode for development
+      TICKET_ENABLED: "true"
+      TICKET_PROVIDER: console
+
+      # Admin recipients
+      KEYCLOAK_ADMIN_EMAILS: internal-admin@nitte.ac.in
+      ADMIN_NOTIFICATION_EMAILS: internal-admin@nitte.ac.in
+
+      # URLs for email links
+      API_BASE_URL: http://localhost:3000
+      FRONTEND_URL: http://localhost:5173
+
+      LOG_LEVEL: info
+      METRICS_PORT: 9100
+    ports:
+      - "9100:9100"
+    networks:
+      - nitte-net
+
+# =============================================================================
+# FRONTEND SERVICES
+# =============================================================================
+
+  # ---------------------------------------------------------------------------
+  # frontend — React + Vite SPA for end users (port 5173)
+  #
+  # Serves the alumni merchandise shop UI.
+  # Built by nginx:alpine at build time; nginx serves the static dist/ folder.
+  #
+  # VITE_API_URL is baked into the build — it points to the node-backend
+  # address as seen from the browser (localhost:3000), not from inside Docker.
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile
+      args:
+        # VITE env vars are resolved at BUILD TIME by Vite, not at runtime.
+        # The browser calls localhost:3000 directly — it never uses the Docker
+        # service name 'node-backend'. This is correct behavior.
+        VITE_API_URL: http://localhost:3000
+    container_name: nitte-frontend
+    restart: unless-stopped
+    depends_on:
+      node-backend:
+        condition: service_healthy
+    ports:
+      - "5173:5173"
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5173/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # admin-dashboard — React + Vite SPA for platform admins (port 5174)
+  #
+  # Used by internal admins to manage users, view orders, view metrics,
+  # monitor Jenkins pipelines, and manage the Nexus database.
+  # ---------------------------------------------------------------------------
+  admin-dashboard:
+    build:
+      context: ./services/admin-dashboard
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:3000
+    container_name: nitte-admin-dashboard
+    restart: unless-stopped
+    depends_on:
+      node-backend:
+        condition: service_healthy
+    ports:
+      - "5174:5174"
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5174/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # merchant-portal — React + Vite SPA for merchants (port 5175)
+  #
+  # Used by merchants to manage their product listings and view orders.
+  # ---------------------------------------------------------------------------
+  merchant-portal:
+    build:
+      context: ./services/merchant-portal
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:3000
+    container_name: nitte-merchant-portal
+    restart: unless-stopped
+    depends_on:
+      node-backend:
+        condition: service_healthy
+    ports:
+      - "5175:5175"
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5175/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

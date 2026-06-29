@@ -5,12 +5,14 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install production dependencies only
 RUN npm install --only=production
 
-# Copy application code
+# Copy application source code only.
+# .env.example is NOT copied — configuration must be injected at runtime
+# via environment variables (docker-compose env_file or Kubernetes Secrets).
+# Baking .env files into images is a security anti-pattern.
 COPY src ./src
-COPY .env.example ./.env.example
 
 EXPOSE 9100
 

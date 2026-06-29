@@ -138,8 +138,8 @@ const limiter = rateLimit({
   max: 10000, // Raise limit significantly for demo/dev environment
   message: 'Too many requests from this IP, please try again later.',
   skip: (req) => {
-    // Skip rate limiting for localhost (development) and authenticated requests
-    return req.ip === '::1' || req.ip === '127.0.0.1' || req.headers.authorization?.startsWith('Bearer admin-token-');
+    // Skip rate limiting for localhost in development only
+    return process.env.NODE_ENV === 'development' && (req.ip === '::1' || req.ip === '127.0.0.1');
   }
 });
 app.use(limiter);

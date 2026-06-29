@@ -7,6 +7,14 @@ COPY package*.json ./
 RUN npm install
 
 COPY . .
+
+# VITE_API_URL is resolved by Vite at BUILD time and baked into the JS bundle.
+# The browser calls this URL directly — it must be the address the browser
+# can reach (typically localhost or a public hostname), NOT the Docker service name.
+# Pass it via docker-compose build args or docker build --build-arg.
+ARG VITE_API_URL=http://localhost:3000
+ENV VITE_API_URL=$VITE_API_URL
+
 RUN npm run build
 
 # Production stage

@@ -42,23 +42,13 @@ export const authMiddleware = async (req, res, next) => {
 
     const token = authHeader.substring(7);
 
-    // Accept demo admin tokens for testing (format: admin-token-*)
-    if (token.startsWith('admin-token-')) {
-      req.user = {
-        id: 'admin-user',
-        email: 'admin@nitte.com',
-        roles: ['admin'],
-        role: 'admin',
-        userId: 'admin-user'
-      };
-      attachPersistentIdentity(req, req.user.userId, req.user.email, req.user.roles);
-      next();
-      return;
-    }
-
     // Try simple JWT verification first (MongoDB-based auth)
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret-key-change-in-production');
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) {
+        throw new Error('JWT_SECRET environment variable is not set');
+      }
+      const decoded = jwt.verify(token, jwtSecret);
       req.user = {
         ...decoded,
         roles: decoded.roles || (decoded.role ? [decoded.role] : ['user']),

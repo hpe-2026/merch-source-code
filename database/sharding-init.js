@@ -25,12 +25,19 @@ try {
 // Switch to nitte_merch database
 db = db.getSiblingDB('nitte_merch');
 
-// Create users collection and users
+// Create application users.
+// Passwords are read from environment variables passed to the mongosh process.
+// Never hardcode credentials in source code.
+// Pass via: mongosh --eval 'var APP_WRITER_PASS=...; var APP_READER_PASS=...' sharding-init.js
+// Or set them in a Kubernetes Secret and mount as environment variables.
+const writerPass = typeof APP_WRITER_PASS !== 'undefined' ? APP_WRITER_PASS : (() => { throw new Error('APP_WRITER_PASS must be set'); })();
+const readerPass = typeof APP_READER_PASS !== 'undefined' ? APP_READER_PASS : (() => { throw new Error('APP_READER_PASS must be set'); })();
+
 print('Creating application users...');
 try {
   db.createUser({
     user: 'app_writer',
-    pwd: 'app_writer_pass',
+    pwd: writerPass,
     roles: [{ role: 'readWrite', db: 'nitte_merch' }]
   });
 } catch (e) { print('app_writer may already exist'); }
@@ -38,7 +45,7 @@ try {
 try {
   db.createUser({
     user: 'app_reader',
-    pwd: 'app_reader_pass',
+    pwd: readerPass,
     roles: [{ role: 'read', db: 'nitte_merch' }]
   });
 } catch (e) { print('app_reader may already exist'); }

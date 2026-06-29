@@ -2,12 +2,28 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Critical secrets must be provided via environment variables.
+// The application will refuse to start if they are absent so that
+// a misconfigured deployment fails loudly rather than running
+// silently with insecure defaults.
+const requiredEnvVars = ['JWT_SECRET', 'KEYCLOAK_CLIENT_SECRET'];
+const missing = requiredEnvVars.filter((v) => !process.env[v]);
+if (missing.length > 0) {
+  // Allow missing in test environments where these are substituted
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error(
+      `Missing required environment variable(s): ${missing.join(', ')}. ` +
+      `Set them in your .env file before starting the application.`
+    );
+  }
+}
+
 const config = {
   node_env: process.env.NODE_ENV || 'development',
   port: process.env.PORT || 3000,
   api_base_url: process.env.API_BASE || 'http://localhost:3000',
   python_service_url: process.env.PYTHON_SERVICE_URL || 'http://localhost:8000',
-  jwt_secret: process.env.JWT_SECRET || 'dev-secret-key-change-in-production',
+  jwt_secret: process.env.JWT_SECRET,
   jwt_expiry: process.env.JWT_EXPIRY || '7d',
   mongodb_url: process.env.MONGODB_URL || 'mongodb://localhost:27017/nitte_merch',
   log_level: process.env.LOG_LEVEL || 'info',
@@ -27,7 +43,7 @@ const config = {
     server_url: process.env.KEYCLOAK_SERVER_URL || 'http://localhost:8080',
     realm: process.env.KEYCLOAK_REALM || 'nitte-realm',
     client_id: process.env.KEYCLOAK_CLIENT_ID || 'nitte-client',
-    client_secret: process.env.KEYCLOAK_CLIENT_SECRET || 'nitte-client-secret',
+    client_secret: process.env.KEYCLOAK_CLIENT_SECRET,
   },
 };
 
