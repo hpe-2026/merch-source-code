@@ -210,43 +210,88 @@ services:
   #   notification-service: receives Keycloak events via POST /api/v1/events
   #   All frontends: redirect to Keycloak for login (OIDC / Authorization Code flow)
   #
-  # DEV SETUP:
-  #   The realm, client, and roles must be configured after first startup.
-  #   See README.md section "Keycloak Setup" for the manual steps, or import
-  #   the realm JSON at keycloak/nitte-realm.json once it exists.
+  # REALM SETUP (first time only):
+  #   After first startup, configure the realm manually:
+  #   1. Open http://localhost:8080
+  #   2. Login with admin / ${KEYCLOAK_ADMIN_PASSWORD}
+  #   3. Create realm: nitte-realm
+  #   4. Create client: nitte-client (confidential, direct access grants enabled)
+  #   5. Copy the client secret to .env as KEYCLOAK_CLIENT_SECRET
+  #   6. Export the realm: Realm Settings → Action → Partial Export
+  #      Save to keycloak/nitte-realm.json for future automated import.
   #
-  # ADMIN CREDENTIALS:
-  #   Username: admin
-  #   Password: set via KEYCLOAK_ADMIN_PASSWORD env var (see below)
+  # AUTOMATED IMPORT (once keycloak/nitte-realm.json exists):
+  #   Uncomment the volume mount and --import-realm flag below.
   #
-  # Access: http://localhost:8080
+  # DATA PERSISTENCE:
+  #   Uses H2 file-based database (default for start-dev).
+  #   Data persists across restarts via the keycloak-data named volume.
+  #   Wiped only on: docker compose down -v
+  #
+  # MANAGEMENT PORT:
+  #   Keycloak 17+ exposes health/metrics on port 9000 (management port),
+  #   separate from the HTTP port 8080. This is why the healthcheck uses 9000.
+  #
+  # Access: http://localhost:8080  (admin / ${KEYCLOAK_ADMIN_PASSWORD:-admin_password})
   # ---------------------------------------------------------------------------
   keycloak:
     image: quay.io/keycloak/keycloak:24.0.3
     container_name: nitte-keycloak
     restart: unless-stopped
-    command: start-dev
+    # start-dev: enables dev mode (HTTP, relaxed hostname checks, faster startup).
+    # Remove --import-realm if keycloak/nitte-realm.json does not exist yet.
+    # Add it back once you have exported a realm JSON.
+    command: >
+      start-dev
     environment:
-      KC_DB: dev-mem          # In-memory H2 for dev (no Postgres needed locally)
+      # Admin bootstrap credentials — used only on first startup.
+      # If keycloak-data volume already exists, these are ignored.
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_password}
+
+      # HTTP settings
       KC_HTTP_PORT: 8080
+      KC_HTTP_ENABLED: "true"
+
+      # Hostname — relaxed for local dev; Keycloak accepts requests on any hostname.
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_HTTPS: "false"
-      KC_HTTP_ENABLED: "true"
-      # Do not enforce HTTPS in dev — TLS termination happens at the Ingress in Kubernetes
+
+      # Management port for health/metrics endpoints (default: 9000).
+      # Separate from the main HTTP port so health probes don't go through
+      # the full Keycloak request stack.
+      KC_HTTP_MANAGEMENT_PORT: 9000
+
+      # Logging — set to INFO for dev, ERROR for prod to reduce noise
+      KC_LOG_LEVEL: INFO
+
+      # KC_DB is intentionally omitted here.
+      # Without it, start-dev defaults to H2 file-based storage at
+      # /opt/keycloak/data/h2 — persisted by the named volume below.
+      # Do NOT set KC_DB=dev-mem: that discards all data on every restart.
+
     ports:
-      - "8080:8080"
+      - "8080:8080"     # Keycloak UI and OIDC endpoints
+      # Port 9000 (management) is NOT published to the host to avoid collision
+      # with MinIO which also uses host port 9000.
+      # The healthcheck uses curl inside the container — no host publish needed.
     volumes:
+      # H2 database + imported realms persist here across restarts.
       - keycloak-data:/opt/keycloak/data
+      # Realm JSON auto-import — uncomment BOTH lines below once
+      # keycloak/nitte-realm.json exists (see REALM SETUP above).
+      # Also add --import-realm to the command above when uncommenting.
+      #- ./keycloak/nitte-realm.json:/opt/keycloak/data/import/nitte-realm.json:ro
     networks:
       - nitte-net
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready || exit 1"]
+      # Keycloak 17+ health endpoint is on the management port (9000), NOT 8080.
+      # /health/ready means Keycloak has fully started and the realm is available.
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/health/ready || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 10
-      start_period: 60s    # Keycloak is slow to start — give it time
+      start_period: 60s    # Keycloak JVM startup is slow — 60s is realistic
 
   # ---------------------------------------------------------------------------
   # MinIO — S3-compatible object storage for user avatars and product images.
