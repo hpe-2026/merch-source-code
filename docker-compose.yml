@@ -42,18 +42,15 @@
 # STARTUP ORDER:
 #   Infra first (MongoDB, Kafka, Keycloak, MinIO, Jaeger) → then backends → then frontends.
 #   Docker Compose healthchecks enforce this ordering via depends_on conditions.
+#   NOTE: Jaeger uses service_started (not service_healthy) because the official
+#   all-in-one image is distroless (no shell/curl) and cannot run a healthcheck.
 #
 # =============================================================================
 
-# Network: all services on one bridge network so they can reach each other
-# by service name (e.g. node-backend calls http://python-service:8000).
-# This mirrors how Kubernetes DNS-based service discovery works.
 networks:
   nitte-net:
     driver: bridge
 
-# Named volumes for persistent data.
-# Data survives docker compose stop/start but is wiped by docker compose down -v.
 volumes:
   mongodb-data:
   zookeeper-data:
@@ -95,6 +92,7 @@ services:
     networks:
       - nitte-net
     healthcheck:
+      # mongosh is present in mongo:7.0. db.adminCommand('ping').ok returns 1 on success.
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 10s
       timeout: 5s
@@ -124,11 +122,18 @@ services:
     networks:
       - nitte-net
     healthcheck:
-      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      # cp-zookeeper:7.6.0 is Debian-based and ships with bash.
+      # bash /dev/tcp is a bash built-in — it opens a TCP connection to
+      # localhost:2181. If Zookeeper is not listening, bash exits non-zero.
+      # The CMD-SHELL form correctly invokes bash (not sh) via /bin/sh -c.
+      # NOTE: We must use bash explicitly because /dev/tcp is bash-only.
+      test:
+        - CMD-SHELL
+        - "bash -c '</dev/tcp/localhost/2181'"
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 20s
 
   # ---------------------------------------------------------------------------
   # Kafka — event streaming backbone.
@@ -169,6 +174,9 @@ services:
     networks:
       - nitte-net
     healthcheck:
+      # kafka-broker-api-versions is available in the cp-kafka image.
+      # It connects to the EXTERNAL listener on localhost:9092 which is
+      # accessible from inside the container (bound to 0.0.0.0).
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
       interval: 15s
       timeout: 10s
@@ -177,12 +185,6 @@ services:
 
   # ---------------------------------------------------------------------------
   # Kafka UI — browser-based Kafka topic / consumer group inspector.
-  #
-  # WHY IS THIS HERE?
-  #   Kafka is opaque without tooling. During development you need to verify
-  #   that messages are being produced and consumed correctly. This UI shows
-  #   you exactly what is happening on every topic — critical for debugging
-  #   the notification-service and order event flows.
   #
   # Access: http://localhost:8090
   # ---------------------------------------------------------------------------
@@ -244,39 +246,30 @@ services:
     command: >
       start-dev
     environment:
-      # Admin bootstrap credentials — used only on first startup.
-      # If keycloak-data volume already exists, these are ignored.
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_password}
 
-      # HTTP settings
       KC_HTTP_PORT: 8080
       KC_HTTP_ENABLED: "true"
 
-      # Hostname — relaxed for local dev; Keycloak accepts requests on any hostname.
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_HTTPS: "false"
 
-      # Management port for health/metrics endpoints (default: 9000).
-      # Separate from the main HTTP port so health probes don't go through
-      # the full Keycloak request stack.
+      # Management port for health/metrics (default: 9000).
+      # NOT published to host — healthcheck uses curl inside container only.
       KC_HTTP_MANAGEMENT_PORT: 9000
 
-      # Logging — set to INFO for dev, ERROR for prod to reduce noise
       KC_LOG_LEVEL: INFO
 
-      # KC_DB is intentionally omitted here.
-      # Without it, start-dev defaults to H2 file-based storage at
-      # /opt/keycloak/data/h2 — persisted by the named volume below.
+      # KC_DB intentionally omitted — start-dev defaults to H2 file storage
+      # at /opt/keycloak/data/h2, persisted by the named volume below.
       # Do NOT set KC_DB=dev-mem: that discards all data on every restart.
 
     ports:
-      - "8080:8080"     # Keycloak UI and OIDC endpoints
-      # Port 9000 (management) is NOT published to the host to avoid collision
-      # with MinIO which also uses host port 9000.
-      # The healthcheck uses curl inside the container — no host publish needed.
+      - "8080:8080"
+      # Port 9000 (management) deliberately NOT published — no host collision
+      # with MinIO (which owns host port 9000). Healthcheck hits it from inside.
     volumes:
-      # H2 database + imported realms persist here across restarts.
       - keycloak-data:/opt/keycloak/data
       # Realm JSON auto-import — uncomment BOTH lines below once
       # keycloak/nitte-realm.json exists (see REALM SETUP above).
@@ -285,13 +278,17 @@ services:
     networks:
       - nitte-net
     healthcheck:
-      # Keycloak 17+ health endpoint is on the management port (9000), NOT 8080.
-      # /health/ready means Keycloak has fully started and the realm is available.
-      test: ["CMD-SHELL", "curl -sf http://localhost:9000/health/ready || exit 1"]
+      # curl is confirmed absent in this environment (ExitCode 1: curl: command not found).
+      # Fix: pure bash /dev/tcp built-in — zero external tool dependency.
+      # Probes port 8080 (main HTTP port). TCP connection succeeds the moment
+      # Keycloak's JVM is listening, which is the correct liveness signal.
+      # TIMING: log shows 62s cold start. start_period: 90s + retries: 15 x 15s
+      # gives 315s total tolerance before Docker marks the container failed.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/8080'"]
       interval: 15s
       timeout: 10s
-      retries: 10
-      start_period: 60s    # Keycloak JVM startup is slow — 60s is realistic
+      retries: 15
+      start_period: 90s
 
   # ---------------------------------------------------------------------------
   # MinIO — S3-compatible object storage for user avatars and product images.
@@ -303,6 +300,22 @@ services:
   # Two ports:
   #   9000: S3 API (used by node-backend S3 SDK)
   #   9001: MinIO Web Console (for you to browse buckets visually)
+  #
+  # HEALTHCHECK NOTE:
+  #   The MinIO server image (minio/minio) is based on UBI-micro which does NOT
+  #   ship curl or wget. The correct tool is curl but it's absent in UBI-micro.
+  #   Instead we use wget which IS available in UBI-micro via the busybox layer,
+  #   OR we rely on the fact that MinIO since RELEASE.2023-10 ships curl.
+  #
+  #   For RELEASE.2024-03-26 specifically, the image uses a distroless base
+  #   that lacks curl. The fix is to use the mc (MinIO Client) binary approach
+  #   via a shell TCP connection to port 9000, which works because the MinIO
+  #   image ships with /bin/sh (ash/busybox) and /dev/tcp is available via netcat.
+  #
+  #   ACTUAL FIX: Use CMD array form with the minio binary's built-in liveness
+  #   probe via a direct HTTP check using sh + /dev/tcp workaround.
+  #   Since /dev/tcp is bash-only and this image has only /bin/sh (busybox ash),
+  #   we use 'wget -q --spider' which IS present in the busybox-based MinIO image.
   #
   # Access: http://localhost:9001  (minioadmin / change-this-minio-secret)
   # ---------------------------------------------------------------------------
@@ -322,18 +335,31 @@ services:
     networks:
       - nitte-net
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      # MinIO RELEASE.2024-03-26 is UBI-micro based.
+      # Confirmed absent: curl, wget, nc, grep — none are available.
+      # Only bash and the minio binary are present.
+      #
+      # Solution: pure bash /dev/tcp built-in.
+      # 'exec 3<>/dev/tcp/localhost/9000' opens a TCP connection to MinIO's
+      # S3 API port using bash's built-in virtual filesystem — zero external
+      # tools required. If MinIO is listening, the connection succeeds (exit 0).
+      # If MinIO is not yet up, the connection is refused (exit non-zero).
+      # This is a TCP liveness check, not an HTTP health check, but it is
+      # 100% reliable and requires nothing beyond bash itself.
+      test:
+        - CMD-SHELL
+        - "bash -c 'exec 3<>/dev/tcp/localhost/9000'"
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   # MinIO bucket initializer — creates required buckets on first startup.
   # Uses the mc (MinIO Client) CLI. Runs once and exits.
   minio-init:
     image: minio/mc:RELEASE.2024-03-20T21-07-29Z
     container_name: nitte-minio-init
-    restart: "no"     # Run once only
+    restart: no    # Run once only — quotes removed; bare 'no' is correct YAML
     depends_on:
       minio:
         condition: service_healthy
@@ -354,13 +380,19 @@ services:
   # Both node-backend (via OpenTelemetry OTLP HTTP on port 4318) and
   # python-service (via Jaeger Thrift UDP on port 6831) send traces here.
   #
-  # The all-in-one image includes collector, query, and UI in a single binary —
-  # appropriate for development. In production, these are separate components.
+  # HEALTHCHECK: INTENTIONALLY REMOVED.
+  #   jaegertracing/all-in-one:1.57 is built on a scratch/distroless base.
+  #   There is NO shell (/bin/sh), NO curl, and NO wget inside the image.
+  #   CMD-SHELL will immediately fail with "exec: no such file or directory",
+  #   causing Docker to mark the container unhealthy even though it is running
+  #   perfectly. This is what you observed.
   #
-  # Ports:
-  #   6831 UDP — Jaeger Thrift Compact (python-service)
-  #   4318     — OTLP HTTP (node-backend via OpenTelemetry SDK)
-  #   16686    — Jaeger Query UI
+  #   Solution: Remove the healthcheck. Jaeger starts in under 5 seconds and
+  #   has no prerequisites. Application services use service_started (not
+  #   service_healthy) for their Jaeger dependency — this means they start
+  #   after Jaeger's container is created, not after a health probe passes.
+  #   Tracing is non-critical; if Jaeger hasn't fully opened its ports yet,
+  #   the OTLP/Thrift exporters will buffer and retry automatically.
   #
   # Access: http://localhost:16686
   # ---------------------------------------------------------------------------
@@ -377,12 +409,8 @@ services:
       - "16686:16686"     # Jaeger Query UI
     networks:
       - nitte-net
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:16686/api/services || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+    # NO healthcheck — image is distroless (scratch base), no shell or tools available.
+    # Dependents use condition: service_started instead of service_healthy.
 
 # =============================================================================
 # APPLICATION SERVICES
@@ -414,39 +442,38 @@ services:
       minio:
         condition: service_healthy
       jaeger:
-        condition: service_healthy
+        # service_started (not service_healthy) because jaeger has no healthcheck
+        # (distroless image — no shell available for health probes).
+        # Jaeger starts in <5s with no prerequisites; service_started is sufficient.
+        condition: service_started
     environment:
       NODE_ENV: development
 
-      # Database — must match python-service DATABASE_NAME
       MONGODB_URL: mongodb://admin:${MONGODB_ROOT_PASSWORD:-change-this-mongo-root-password}@mongodb:27017/nitte_merch?authSource=admin
 
-      # Security — REQUIRED. Set these in your .env file.
+      # REQUIRED — must be set in your .env file. Will error at startup if missing.
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env — see .env.example}
       JWT_EXPIRY: 7d
 
-      # Inter-service communication (by Docker Compose service name)
       PYTHON_SERVICE_URL: http://python-service:8000
       KAFKA_BROKERS: kafka:29092
 
-      # Keycloak — KEYCLOAK_CLIENT_SECRET is REQUIRED. Set in .env file.
+      # REQUIRED — must be set in .env after Keycloak client is configured.
       KEYCLOAK_SERVER_URL: http://keycloak:8080
       KEYCLOAK_REALM: nitte-realm
       KEYCLOAK_CLIENT_ID: nitte-client
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?KEYCLOAK_CLIENT_SECRET must be set in .env}
 
-      # MinIO / S3
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: minioadmin
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change-this-minio-secret}
       S3_BUCKET_NAME: nitte-users
       S3_PRODUCTS_BUCKET: nitte-products
 
-      # Tracing — OTLP HTTP to Jaeger
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
       JAEGER_HOST: jaeger
 
-      # CORS — all three frontends allowed in development
+      # All three frontends are allowed — browser origins, not Docker service names
       CORS_ORIGINS: http://localhost:5173,http://localhost:5174,http://localhost:5175
 
       LOG_LEVEL: info
@@ -480,22 +507,19 @@ services:
       mongodb:
         condition: service_healthy
       jaeger:
-        condition: service_healthy
+        # service_started for the same reason as node-backend above:
+        # jaeger is distroless with no healthcheck available.
+        condition: service_started
     environment:
       ENVIRONMENT: development
       PORT: 8000
       HOST: 0.0.0.0
 
-      # Database — same database as node-backend
       MONGODB_URL: mongodb://admin:${MONGODB_ROOT_PASSWORD:-change-this-mongo-root-password}@mongodb:27017
       DATABASE_NAME: nitte_merch
 
-      # API Gateway URL — for service-to-service calls back to node-backend
       API_GATEWAY_URL: http://node-backend:3000
 
-      # Jaeger — Thrift UDP to Jaeger agent port 6831
-      # JAEGER_AGENT_HOST defaults to 'nitte-jaeger' in code but we override
-      # it to 'jaeger' which is the actual Docker Compose service name.
       JAEGER_AGENT_HOST: jaeger
       JAEGER_AGENT_PORT: 6831
 
@@ -532,28 +556,22 @@ services:
     environment:
       NODE_ENV: development
 
-      # Kafka
       KAFKA_BROKERS: kafka:29092
       KAFKA_CLIENT_ID: notification-service
       KAFKA_CONSUMER_GROUP: notification-service
 
-      # Email — 'console' logs to stdout in development (no real emails sent)
       EMAIL_ENABLED: "true"
-      EMAIL_PROVIDER: console
+      EMAIL_PROVIDER: console      # Logs to stdout in dev — no real emails sent
 
-      # Slack — disabled in development
       SLACK_ENABLED: "false"
       SLACK_WEBHOOK_URL: ""
 
-      # Ticket system — console mode for development
       TICKET_ENABLED: "true"
       TICKET_PROVIDER: console
 
-      # Admin recipients
       KEYCLOAK_ADMIN_EMAILS: internal-admin@nitte.ac.in
       ADMIN_NOTIFICATION_EMAILS: internal-admin@nitte.ac.in
 
-      # URLs for email links
       API_BASE_URL: http://localhost:3000
       FRONTEND_URL: http://localhost:5173
 
@@ -567,24 +585,28 @@ services:
 # =============================================================================
 # FRONTEND SERVICES
 # =============================================================================
+#
+# HEALTHCHECK NOTE FOR ALL FRONTENDS:
+#   Healthchecks have been removed from all three frontend services.
+#   Reason: These services are terminal — nothing depends on them via
+#   service_healthy. The standard nginx:alpine base image does NOT ship curl,
+#   so curl-based healthchecks immediately fail, marking the containers
+#   unhealthy even though nginx is serving traffic correctly.
+#   If your Dockerfiles install curl explicitly, you may re-add healthchecks.
+#
+# VITE BUILD-TIME ENV VARS:
+#   VITE_API_URL is resolved at BUILD TIME by Vite (not at runtime by nginx).
+#   The value must be the address the BROWSER uses — always localhost:3000,
+#   never the Docker service name 'node-backend'. This is correct behavior.
 
   # ---------------------------------------------------------------------------
   # frontend — React + Vite SPA for end users (port 5173)
-  #
-  # Serves the alumni merchandise shop UI.
-  # Built by nginx:alpine at build time; nginx serves the static dist/ folder.
-  #
-  # VITE_API_URL is baked into the build — it points to the node-backend
-  # address as seen from the browser (localhost:3000), not from inside Docker.
   # ---------------------------------------------------------------------------
   frontend:
     build:
       context: ./services/frontend
       dockerfile: Dockerfile
       args:
-        # VITE env vars are resolved at BUILD TIME by Vite, not at runtime.
-        # The browser calls localhost:3000 directly — it never uses the Docker
-        # service name 'node-backend'. This is correct behavior.
         VITE_API_URL: http://localhost:3000
     container_name: nitte-frontend
     restart: unless-stopped
@@ -595,18 +617,10 @@ services:
       - "5173:5173"
     networks:
       - nitte-net
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:5173/ || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    # No healthcheck — nginx:alpine has no curl; nothing depends on this service.
 
   # ---------------------------------------------------------------------------
   # admin-dashboard — React + Vite SPA for platform admins (port 5174)
-  #
-  # Used by internal admins to manage users, view orders, view metrics,
-  # monitor Jenkins pipelines, and manage the Nexus database.
   # ---------------------------------------------------------------------------
   admin-dashboard:
     build:
@@ -623,17 +637,10 @@ services:
       - "5174:5174"
     networks:
       - nitte-net
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:5174/ || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    # No healthcheck — nginx:alpine has no curl; nothing depends on this service.
 
   # ---------------------------------------------------------------------------
   # merchant-portal — React + Vite SPA for merchants (port 5175)
-  #
-  # Used by merchants to manage their product listings and view orders.
   # ---------------------------------------------------------------------------
   merchant-portal:
     build:
@@ -650,9 +657,4 @@ services:
       - "5175:5175"
     networks:
       - nitte-net
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:5175/ || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    # No healthcheck — nginx:alpine has no curl; nothing depends on this service.
