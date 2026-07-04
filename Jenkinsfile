@@ -1,283 +1,411 @@
-// NITTE Alumni Shop — CI/CD Pipeline
+// =============================================================================
+// Jenkinsfile  —  merch-source-code
 //
-// WHAT THIS PIPELINE DOES:
-//   1. Checks out the source code repository (this repo).
-//   2. Builds Docker images for each service using Kaniko (no Docker daemon required —
-//      the cluster runtime is containerd, not Docker).
-//   3. Pushes built images to the Nexus private registry.
-//   4. Clones the SEPARATE GitOps configuration repository and bumps the image tags
-//      in the dev overlay kustomization so ArgoCD auto-syncs the Dev cluster.
+// Single pipeline that behaves differently for:
+//   - Pull Request builds        (CI only: build, test, sonar, quality gate)
+//   - main branch builds (CI/CD): kaniko build → push to Nexus →
+//                                  bump image tag in hpe-merch-config →
+//                                  push → ArgoCD takes over from there
 //
-// WHY TWO REPOSITORIES?
-//   GitOps principle: source code changes and Kubernetes manifests are decoupled.
-//   The source repo (this file lives here) contains application code only.
-//   The config repo contains all Kubernetes YAML, Kustomize overlays, and ArgoCD apps.
-//   Jenkins only writes to the config repo in the GitOps stage — never to this repo.
-//
-// ONE-TIME PREREQUISITES (see docs/CICD_PIPELINE.md):
-//   - Secret  jenkins/kaniko-docker-config  (Nexus credentials for Kaniko)
-//   - Jenkins credential id 'github-token'   (username + PAT — must have write access to config repo)
-//   - Environment variable CONFIG_REPO_URL set below must point to your GitOps config repository.
+// Jenkins NEVER runs kubectl / helm / argocd here.
+// It only pushes an image and edits a YAML file in the config repo.
+// ArgoCD does the deployment.
+// =============================================================================
 
-pipeline {
-  agent {
-    kubernetes {
-      defaultContainer 'kaniko'
-      yaml '''
+// ---- Master list of microservices in this monorepo -------------------------
+// Key   = service name  (also used as the image name)
+// Value = path relative to repo root that contains the Dockerfile
+//
+// FIX #1/#2/#5: Use a plain Map and always reference it as ALL_SERVICES.
+//               Keys are extracted with .keySet() / .collectEntries() so that
+//               .join() is called on a List, not on the Map itself.
+def ALL_SERVICES = [
+    "frontend"             : "services/frontend",
+    "node-backend"         : "services/node-backend",
+    "python-service"       : "services/python-service",
+    "merchant-portal"      : "services/merchant-portal",
+    "notification-service" : "services/notification-service",
+    "admin-dashboard"      : "services/admin-dashboard"
+]
+
+// ---- Helper: Kaniko pod template -------------------------------------------
+// FIX #10: svc is passed as a parameter so the closure captures a local copy,
+//          not a loop-variable reference.
+def kanikoPodYaml(String svc) {
+    return """
 apiVersion: v1
 kind: Pod
 metadata:
   labels:
-    app: nitte-ci
-  annotations:
-    # Disable Istio sidecar injection for CI pods — sidecars interfere with
-    # Kaniko network egress and add unnecessary overhead.
-    sidecar.istio.io/inject: "false"
+    job: kaniko-${svc}
 spec:
+  restartPolicy: Never
   containers:
   - name: kaniko
-    image: gcr.io/kaniko-project/executor:v1.20.0-debug
-    command: ["/busybox/cat"]
+    image: gcr.io/kaniko-project/executor:v1.23.2-debug
+    imagePullPolicy: IfNotPresent
+    command:
+    - /busybox/cat
     tty: true
-    resources:
-      requests: { memory: "256Mi", cpu: "200m" }
-      limits:   { memory: "1536Mi", cpu: "1000m" }
     volumeMounts:
-    - name: docker-config
+    - name: nexus-docker-config
       mountPath: /kaniko/.docker
-  - name: tools
-    image: alpine/git:latest
-    command: ["cat"]
-    tty: true
-    resources:
-      requests: { memory: "128Mi", cpu: "100m" }
-      limits:   { memory: "256Mi", cpu: "500m" }
   volumes:
-  - name: docker-config
+  - name: nexus-docker-config
     secret:
-      # This secret must contain a valid config.json with Nexus auth.
-      # Create with: kubectl create secret generic kaniko-docker-config \
-      #   --from-file=config.json=path/to/nexus-config.json -n jenkins
-      secretName: kaniko-docker-config
+      secretName: nexus-registry-credentials
       items:
-      - key: config.json
+      - key: .dockerconfigjson
         path: config.json
-'''
-    }
-  }
-
-  parameters {
-    string(
-      name: 'SERVICES',
-      defaultValue: 'all',
-      description: 'Space-separated list of services to build, or "all". ' +
-                   'Valid values: node-backend python-service frontend admin-dashboard merchant-portal notification-service'
-    )
-  }
-
-  environment {
-    // Nexus Docker registry address (NodePort service on the Admin cluster)
-    REGISTRY = '192.168.56.202:8082'
-
-    // Image tag: BUILD_NUMBER guarantees uniqueness and traceability back to this run.
-    // We do NOT use 'latest' — mutable tags break GitOps determinism.
-    TAG = "1.1.${BUILD_NUMBER}"
-
-    // All services that have a Dockerfile under services/<name>/
-    // loki-rbac-proxy is excluded until that service directory exists in the source repo.
-    ALL_SVCS = 'node-backend python-service frontend admin-dashboard merchant-portal notification-service'
-
-    // GitOps config repository — this is NOT the source code repo.
-    // Jenkins clones this separately and only updates the image tags here.
-    CONFIG_REPO_URL = 'https://github.com/YOUR_ORG/nitte-merch-config.git'
-
-    // Path inside the config repo where the dev overlay kustomization lives.
-    // Jenkins updates image tags here; ArgoCD detects the change and syncs nitte-dev.
-    KUSTOMIZATION = 'overlays/dev/kustomization.yaml'
-  }
-
-  options {
-    timeout(time: 40, unit: 'MINUTES')
-    buildDiscarder(logRotator(numToKeepStr: '15'))
-  }
-
-  stages {
-
-    // ─────────────────────────────────────────────────────────────
-    // Stage 1: Checkout source code
-    // ─────────────────────────────────────────────────────────────
-    stage('Checkout') {
-      steps {
-        container('tools') {
-          checkout scm
-          sh '''
-            git config --global --add safe.directory "*"
-            git rev-parse --short HEAD > .gitsha
-            echo "Building tag $TAG from commit $(cat .gitsha)"
-          '''
-        }
-      }
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // Stage 2: Build & Push images with Kaniko
-    //
-    // WHY KANIKO?
-    //   The Kubernetes nodes use containerd as the runtime (no Docker daemon).
-    //   Kaniko builds OCI-compliant images from a Dockerfile without needing
-    //   a Docker socket, making it safe to run inside Kubernetes pods.
-    //
-    // WHY --insecure / --skip-tls-verify?
-    //   Nexus in this environment uses HTTP (no TLS certificate on the private
-    //   registry). In a production environment you would add a valid TLS cert to
-    //   Nexus and remove these flags.
-    // ─────────────────────────────────────────────────────────────
-    stage('Build & Push (Kaniko)') {
-      steps {
-        container('kaniko') {
-          sh '''
-            set -e
-
-            SVCS="$SERVICES"
-            [ "$SVCS" = "all" ] && SVCS="$ALL_SVCS"
-
-            for s in $SVCS; do
-              # All service Dockerfiles live under services/<service-name>/Dockerfile
-              # This was previously wrong — the old pipeline used $s/Dockerfile which
-              # would look in the repo root and fail for every service.
-              CONTEXT_DIR="services/$s"
-
-              if [ ! -f "$CONTEXT_DIR/Dockerfile" ]; then
-                echo "!! $CONTEXT_DIR/Dockerfile not found — skipping $s"
-                continue
-              fi
-
-              echo "======== Building $REGISTRY/nitte-merch/$s:$TAG ========"
-
-              /kaniko/executor \
-                --context="dir://$(pwd)/$CONTEXT_DIR" \
-                --dockerfile="Dockerfile" \
-                --destination="$REGISTRY/nitte-merch/$s:$TAG" \
-                --insecure \
-                --skip-tls-verify \
-                --insecure-pull \
-                --cache=false \
-                --cleanup
-
-              echo "✓ Pushed $REGISTRY/nitte-merch/$s:$TAG"
-            done
-          '''
-        }
-      }
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // Stage 3: GitOps — bump image tags in the config repository
-    //
-    // WHY A SEPARATE CONFIG REPO?
-    //   GitOps requires a clear audit trail of what is deployed and when.
-    //   Kubernetes manifests in a dedicated repo means:
-    //   - Every deployment is a git commit with an author and timestamp.
-    //   - ArgoCD watches only the config repo — it never polls source code.
-    //   - Rollback = revert the config repo commit. No re-running CI.
-    //   - Promotion (dev → prod) = PR to update the prod overlay. Human reviewed.
-    //
-    // THIS STAGE:
-    //   1. Clones the config repo.
-    //   2. Updates overlays/dev/kustomization.yaml with the new image tags.
-    //   3. Commits and pushes to main.
-    //   ArgoCD detects the commit and syncs the Dev cluster automatically.
-    //
-    // PRODUCTION PROMOTION:
-    //   To deploy to prod, open a PR that updates overlays/prod/kustomization.yaml.
-    //   That PR is reviewed, approved, and merged by a human — Jenkins never
-    //   automatically writes to the prod overlay.
-    // ─────────────────────────────────────────────────────────────
-    stage('GitOps: Bump dev image tags') {
-      steps {
-        container('tools') {
-          withCredentials([usernamePassword(
-            credentialsId: 'github-token',
-            usernameVariable: 'GH_USER',
-            passwordVariable: 'GH_TOKEN'
-          )]) {
-            sh '''
-              set -e
-
-              git config --global --add safe.directory "*"
-
-              # Install yq — a portable YAML processor for patching kustomization files
-              apk add --no-cache wget >/dev/null 2>&1 || true
-              wget -qO /usr/local/bin/yq \
-                https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
-              chmod +x /usr/local/bin/yq
-
-              # Clone the GitOps config repository.
-              # This is a DIFFERENT repository from the source code repo (this repo).
-              # Jenkins writes ONLY to the config repo in this stage.
-              REPO_URL="https://${GH_USER}:${GH_TOKEN}@$(echo $CONFIG_REPO_URL | sed 's|https://||')"
-              git clone --depth=1 "$REPO_URL" config-repo
-              cd config-repo
-
-              # Verify the kustomization file exists before modifying it.
-              # If it does not exist, the config repository is not set up correctly.
-              if [ ! -f "$KUSTOMIZATION" ]; then
-                echo "ERROR: $KUSTOMIZATION not found in config repo."
-                echo "The GitOps config repository must be initialized before this pipeline runs."
-                echo "See docs/GITOPS_SETUP.md for setup instructions."
-                exit 1
-              fi
-
-              # Determine which services to update
-              SVCS="$SERVICES"
-              [ "$SVCS" = "all" ] && SVCS="$ALL_SVCS"
-
-              # Bump image tag for each service in the dev overlay kustomization
-              for s in $SVCS; do
-                IMAGE_NAME="$REGISTRY/nitte-merch/$s"
-                yq -i "(.images[] | select(.name == \\"$IMAGE_NAME\\") | .newTag) = \\"$TAG\\"" \
-                  "$KUSTOMIZATION"
-                echo "✓ set $IMAGE_NAME -> $TAG"
-              done
-
-              # Commit and push the tag bump
-              git config user.email "ci@nitte.local"
-              git config user.name  "jenkins-ci"
-              git add "$KUSTOMIZATION"
-
-              if git diff --cached --quiet; then
-                echo "No tag changes to commit (images already at $TAG)."
-              else
-                git commit -m "ci: bump dev images to $TAG (Jenkins build #$BUILD_NUMBER)"
-                git push "$REPO_URL" HEAD:main
-                echo "✓ Pushed to config repo — ArgoCD will sync nitte-dev."
-              fi
-            '''
-          }
-        }
-      }
-    }
-  }
-
-  post {
-    success {
-      echo """
-CI pipeline succeeded.
-  Images pushed : $REGISTRY/nitte-merch/<service>:$TAG
-  Config repo   : $CONFIG_REPO_URL
-  ArgoCD will auto-sync the Dev cluster (nitte-dev namespace).
-
-To promote to production:
-  Open a PR in the config repo updating overlays/prod/kustomization.yaml
-  with the same tag ($TAG), get it reviewed, and merge it.
 """
+}
+
+// ---- Helper: resolve service directory from map ----------------------------
+// FIX #2: Single authoritative helper so every stage uses ALL_SERVICES[svc],
+//         never the undefined SERVICES variable.
+def svcDir(Map allSvcs, String svc) {
+    def d = allSvcs[svc]
+    if (!d) { error("Unknown service '${svc}' — not listed in ALL_SERVICES.") }
+    return d
+}
+
+// ============================================================================
+pipeline {
+
+    agent any
+
+    options {
+        timestamps()
+        ansiColor('xterm')
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '25', artifactNumToKeepStr: '10'))
+        timeout(time: 90, unit: 'MINUTES')
     }
-    failure {
-      echo "CI pipeline FAILED. Check the stage logs above for the root cause."
+
+    environment {
+        // FIX #1/#5: join only the keys (a List), not the whole Map.
+        ALL_SERVICES_CSV   = ALL_SERVICES.keySet().join(',')
+
+        // Nexus — docker-format hosted repo running on the admin cluster.
+        // ⚠ Replace with your real Nexus host:port if different.
+        NEXUS_REGISTRY     = 'nexus.admin.svc.cluster.local:8082'
+        NEXUS_REPO_NAME    = 'merch-docker'
+
+        // GitOps config repo
+        CONFIG_REPO_URL    = 'https://github.com/hpe-2026/hpe-merch-config.git'
+        CONFIG_REPO_DIR    = 'hpe-merch-config'
+        CONFIG_REPO_BRANCH = 'main'
+
+        // SonarQube server name (must match the name in Manage Jenkins → System)
+        SONARQUBE_SERVER   = 'sonarqube-admin'
+
+        // Credential IDs (created in Jenkins → Manage Jenkins → Credentials)
+        GITHUB_CRED_ID     = 'github-pat'
+        SONAR_TOKEN_ID     = 'sonarqube-token'
+        NEXUS_CRED_ID      = 'nexus-creds'
     }
-    always {
-      // Clean workspace to prevent stale build artifacts affecting the next run.
-      cleanWs()
+
+    // =========================================================================
+    stages {
+
+        // ── Checkout ──────────────────────────────────────────────────────────
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_SHORT_SHA = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                    env.IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_SHORT_SHA}"
+                    env.IS_PR     = (env.CHANGE_ID   != null)   ? 'true' : 'false'
+                    env.IS_MAIN   = (env.BRANCH_NAME == 'main') ? 'true' : 'false'
+
+                    echo "Build context → PR:${env.IS_PR}  MAIN:${env.IS_MAIN}  TAG:${env.IMAGE_TAG}"
+                }
+            }
+        }
+
+        // ── Detect Changed Services ───────────────────────────────────────────
+        // FIX #3: Properly split diff output into lines, extract the service
+        //         name from  services/<service>/...  paths, and guard against
+        //         the undefined `file` variable that crashed the original.
+        stage('Detect Changed Services') {
+            steps {
+                script {
+                    def baseRef
+
+                    if (env.IS_PR == 'true') {
+                        sh "git fetch origin ${env.CHANGE_TARGET} --depth=100"
+                        baseRef = "origin/${env.CHANGE_TARGET}"
+                    } else {
+                        sh 'git fetch origin main --depth=100'
+                        def hasPrev = sh(
+                            script: 'git rev-parse HEAD~1 >/dev/null 2>&1',
+                            returnStatus: true
+                        ) == 0
+                        baseRef = hasPrev ? 'HEAD~1' : null
+                    }
+
+                    def changedSet = [] as Set   // use a Set to avoid duplicates
+
+                    if (baseRef) {
+                        def diffOut = sh(
+                            script: "git diff --name-only ${baseRef}...HEAD 2>/dev/null || true",
+                            returnStdout: true
+                        ).trim()
+
+                        // Walk every changed file and extract the service name.
+                        //   services/frontend/src/App.js  →  frontend
+                        //   services/node-backend/routes/user.js  →  node-backend
+                        diffOut.split('\n').each { filePath ->
+                            if (!filePath) return
+                            def parts = filePath.tokenize('/')
+                            // Must be  services/<svc>/...  (at least two tokens after root)
+                            if (parts.size() >= 2 && parts[0] == 'services') {
+                                def candidate = parts[1]
+                                if (ALL_SERVICES.containsKey(candidate)) {
+                                    changedSet << candidate
+                                }
+                            }
+                        }
+                    }
+
+                    if (changedSet.isEmpty()) {
+                        echo 'No specific service changes detected (or first build) — building ALL services.'
+                        changedSet = ALL_SERVICES.keySet() as Set
+                    }
+
+                    env.SERVICES_TO_BUILD = changedSet.join(',')
+                    echo "Services to process this run: ${env.SERVICES_TO_BUILD}"
+                }
+            }
+        }
+
+        // ── Install Dependencies ──────────────────────────────────────────────
+        // FIX #2: dir() now uses ALL_SERVICES[svc], not the undefined SERVICES.
+        stage('Install Dependencies') {
+            steps {
+                script {
+                    env.SERVICES_TO_BUILD.split(',').each { svc ->
+                        dir(svcDir(ALL_SERVICES, svc)) {
+                            sh '''
+                                if   [ -f package.json      ]; then
+                                    npm ci
+                                elif [ -f requirements.txt  ]; then
+                                    pip install --user -r requirements.txt
+                                else
+                                    echo "No recognized dependency manifest in $(pwd) — skipping."
+                                fi
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Build ─────────────────────────────────────────────────────────────
+        stage('Build') {
+            steps {
+                script {
+                    env.SERVICES_TO_BUILD.split(',').each { svc ->
+                        dir(svcDir(ALL_SERVICES, svc)) {
+                            sh '''
+                                if   [ -f package.json                        ]; then
+                                    npm run build --if-present
+                                elif [ -f setup.py ] || [ -f pyproject.toml   ]; then
+                                    python -m compileall -q .
+                                else
+                                    echo "No build step defined for $(pwd) — skipping."
+                                fi
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Unit Tests ────────────────────────────────────────────────────────
+        stage('Unit Tests') {
+            steps {
+                script {
+                    env.SERVICES_TO_BUILD.split(',').each { svc ->
+                        dir(svcDir(ALL_SERVICES, svc)) {
+                            sh '''
+                                if   [ -f package.json     ]; then
+                                    npm test -- --ci \
+                                        --reporters=default \
+                                        --reporters=jest-junit || exit 1
+                                elif [ -f requirements.txt ]; then
+                                    python -m pytest --junitxml=test-results.xml || exit 1
+                                else
+                                    echo "No tests defined for $(pwd) — skipping."
+                                fi
+                            '''
+                        }
+                    }
+                }
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true,
+                          testResults: '**/test-results.xml,**/junit.xml'
+                }
+            }
+        }
+
+        // ── SonarQube Analysis ────────────────────────────────────────────────
+        // FIX #7: Pass the literal constant (SONARQUBE_SERVER) to
+        //         withSonarQubeEnv() so Jenkins resolves it at compile time.
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonarqube-admin') {
+                    withCredentials([string(credentialsId: env.SONAR_TOKEN_ID,
+                                            variable: 'SONAR_TOKEN')]) {
+                        script {
+                            env.SERVICES_TO_BUILD.split(',').each { svc ->
+                                dir(svcDir(ALL_SERVICES, svc)) {
+                                    sh """
+                                        sonar-scanner \
+                                          -Dsonar.projectKey=merch-${svc} \
+                                          -Dsonar.sources=. \
+                                          -Dsonar.login=\$SONAR_TOKEN
+                                    """
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Quality Gate ──────────────────────────────────────────────────────
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 15, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        // =====================================================================
+        // Everything below this point ONLY runs on main (post-merge).
+        // A PR build stops at Quality Gate — no image is built, nothing pushed.
+        // =====================================================================
+
+        // ── Kaniko: Build & Push Images ───────────────────────────────────────
+        // FIX #4:  --dockerfile now correctly points to services/<svc>/Dockerfile
+        // FIX #10: Local copies of svc, image captured before entering the
+        //          podTemplate/node closure to avoid stale variable references.
+        stage('Kaniko: Build & Push Images') {
+            when { expression { env.IS_MAIN == 'true' } }
+            steps {
+                script {
+                    // Build a map of parallel branches — one per service.
+                    // FIX #9: Services are built in parallel, cutting wall-clock
+                    //         time from (N × slowest) down to ~(slowest).
+                    def parallelBuilds = [:]
+
+                    env.SERVICES_TO_BUILD.split(',').each { svcName ->
+                        // Capture loop variable into a local so the closure is safe.
+                        def svc      = svcName
+                        def svcPath  = svcDir(ALL_SERVICES, svc)
+                        def imageRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:${env.IMAGE_TAG}"
+
+                        parallelBuilds["kaniko-${svc}"] = {
+                            podTemplate(yaml: kanikoPodYaml(svc)) {
+                                node(POD_LABEL) {
+                                    checkout scm
+                                    container('kaniko') {
+                                        sh """
+                                            /kaniko/executor \
+                                              --context=\$(pwd)/${svcPath} \
+                                              --dockerfile=\$(pwd)/${svcPath}/Dockerfile \
+                                              --destination=${imageRef} \
+                                              --cache=true \
+                                              --cache-ttl=168h
+                                        """
+                                    }
+                                    echo "✔ Pushed ${imageRef} to Nexus."
+                                }
+                            }
+                        }
+                    }
+
+                    parallel parallelBuilds
+                }
+            }
+        }
+
+        // ── Update Config Repository ──────────────────────────────────────────
+        // FIX #8:  yq v4 syntax corrected:
+        //          (.images[] | select(.name == "X")).newTag = "Y"
+        // FIX #11: Authenticated URL built in Groovy; no fragile sed stripping.
+        //
+        // ⚠ IMPORTANT: The kustomization.yaml path below assumes the layout
+        //   apps/<service>/kustomization.yaml  inside  hpe-merch-config.
+        //   Adjust the `manifestPath` variable to match your actual layout,
+        //   e.g. apps/<service>/overlays/dev/kustomization.yaml
+        stage('Update Config Repository') {
+            when { expression { env.IS_MAIN == 'true' } }
+            steps {
+                withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID,
+                                                  usernameVariable: 'GIT_USER',
+                                                  passwordVariable: 'GIT_TOKEN')]) {
+                    script {
+                        // FIX #11: Build authenticated URL in Groovy — safe even
+                        //          when the token contains special characters.
+                        def repoHost    = env.CONFIG_REPO_URL.replaceFirst('https://', '')
+                        def authedUrl   = "https://\${GIT_USER}:\${GIT_TOKEN}@${repoHost}"
+
+                        sh """
+                            rm -rf ${env.CONFIG_REPO_DIR}
+                            git clone --depth=1 --branch ${env.CONFIG_REPO_BRANCH} \
+                                ${authedUrl} \
+                                ${env.CONFIG_REPO_DIR}
+                        """
+
+                        dir(env.CONFIG_REPO_DIR) {
+                            env.SERVICES_TO_BUILD.split(',').each { svc ->
+                                // ⚠ Adjust this path to match your config repo layout.
+                                def manifestPath = "apps/${svc}/kustomization.yaml"
+
+                                // FIX #8: Correct yq v4 syntax — updates ONLY newTag
+                                //         for the matching image entry; leaves the rest
+                                //         of the YAML untouched.
+                                sh """
+                                    yq -i '(.images[] | select(.name == "${svc}")).newTag = "${env.IMAGE_TAG}"' \
+                                        ${manifestPath}
+                                """
+
+                                echo "Updated ${manifestPath} → newTag = ${env.IMAGE_TAG}"
+                            }
+
+                            sh """
+                                git config user.email "jenkins-ci@merch.local"
+                                git config user.name  "jenkins-ci"
+                                git add -A
+                                git diff --cached --quiet || git commit -m \
+                                    "ci: bump image tag(s) → ${env.IMAGE_TAG} for [${env.SERVICES_TO_BUILD}] (build #${env.BUILD_NUMBER})"
+                                git push origin ${env.CONFIG_REPO_BRANCH}
+                            """
+                        }
+                    }
+                }
+            }
+        }
     }
-  }
+
+    // =========================================================================
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo "✔ Pipeline PASSED — branch: ${env.BRANCH_NAME ?: env.CHANGE_BRANCH}  tag: ${env.IMAGE_TAG ?: 'n/a'}"
+        }
+        failure {
+            echo "✘ Pipeline FAILED at build #${env.BUILD_NUMBER}. Check the console output above for details."
+        }
+    }
 }
