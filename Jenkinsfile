@@ -191,7 +191,7 @@ pipeline {
                         dir(svcDir(ALL_SERVICES, svc)) {
                             sh '''
                                 if   [ -f package.json      ]; then
-                                    npm ci
+                                    npm install --legacy-peer-deps
                                 elif [ -f requirements.txt  ]; then
                                     pip install --user -r requirements.txt
                                 else
