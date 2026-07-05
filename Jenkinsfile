@@ -28,38 +28,6 @@ def ALL_SERVICES = [
     "admin-dashboard"      : "services/admin-dashboard"
 ]
 
-// ---- Helper: Kaniko pod template -------------------------------------------
-// FIX #10: svc is passed as a parameter so the closure captures a local copy,
-//          not a loop-variable reference.
-def kanikoPodYaml(String svc) {
-    return """
-apiVersion: v1
-kind: Pod
-metadata:
-  labels:
-    job: kaniko-${svc}
-spec:
-  restartPolicy: Never
-  containers:
-  - name: kaniko
-    image: gcr.io/kaniko-project/executor:v1.23.2-debug
-    imagePullPolicy: IfNotPresent
-    command:
-    - /busybox/cat
-    tty: true
-    volumeMounts:
-    - name: nexus-docker-config
-      mountPath: /kaniko/.docker
-  volumes:
-  - name: nexus-docker-config
-    secret:
-      secretName: nexus-registry-credentials
-      items:
-      - key: .dockerconfigjson
-        path: config.json
-"""
-}
-
 // ---- Helper: resolve service directory from map ----------------------------
 // FIX #2: Single authoritative helper so every stage uses ALL_SERVICES[svc],
 //         never the undefined SERVICES variable.
@@ -72,7 +40,11 @@ def svcDir(Map allSvcs, String svc) {
 // ============================================================================
 pipeline {
 
-    agent any
+    agent {
+        kubernetes {
+            inheritFrom 'devops-agent'
+        }
+    }
 
     options {
         timestamps()
@@ -111,17 +83,19 @@ pipeline {
         // ── Checkout ──────────────────────────────────────────────────────────
         stage('Checkout') {
             steps {
-                checkout scm
-                script {
-                    env.GIT_SHORT_SHA = sh(
-                        script: 'git rev-parse --short HEAD',
-                        returnStdout: true
-                    ).trim()
-                    env.IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_SHORT_SHA}"
-                    env.IS_PR     = (env.CHANGE_ID   != null)   ? 'true' : 'false'
-                    env.IS_MAIN   = (env.BRANCH_NAME == 'main') ? 'true' : 'false'
+                container('node') {
+                    checkout scm
+                    script {
+                        env.GIT_SHORT_SHA = sh(
+                            script: 'git rev-parse --short HEAD',
+                            returnStdout: true
+                        ).trim()
+                        env.IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_SHORT_SHA}"
+                        env.IS_PR     = (env.CHANGE_ID   != null)   ? 'true' : 'false'
+                        env.IS_MAIN   = (env.BRANCH_NAME == 'main') ? 'true' : 'false'
 
-                    echo "Build context → PR:${env.IS_PR}  MAIN:${env.IS_MAIN}  TAG:${env.IMAGE_TAG}"
+                        echo "Build context → PR:${env.IS_PR}  MAIN:${env.IS_MAIN}  TAG:${env.IMAGE_TAG}"
+                    }
                 }
             }
         }
@@ -132,52 +106,54 @@ pipeline {
         //         the undefined `file` variable that crashed the original.
         stage('Detect Changed Services') {
             steps {
-                script {
-                    def baseRef
+                container('node') {
+                    script {
+                        def baseRef
 
-                    if (env.IS_PR == 'true') {
-                        sh "git fetch origin ${env.CHANGE_TARGET} --depth=100"
-                        baseRef = "origin/${env.CHANGE_TARGET}"
-                    } else {
-                        sh 'git fetch origin main --depth=100'
-                        def hasPrev = sh(
-                            script: 'git rev-parse HEAD~1 >/dev/null 2>&1',
-                            returnStatus: true
-                        ) == 0
-                        baseRef = hasPrev ? 'HEAD~1' : null
-                    }
+                        if (env.IS_PR == 'true') {
+                            sh "git fetch origin ${env.CHANGE_TARGET} --depth=100"
+                            baseRef = "origin/${env.CHANGE_TARGET}"
+                        } else {
+                            sh 'git fetch origin main --depth=100'
+                            def hasPrev = sh(
+                                script: 'git rev-parse HEAD~1 >/dev/null 2>&1',
+                                returnStatus: true
+                            ) == 0
+                            baseRef = hasPrev ? 'HEAD~1' : null
+                        }
 
-                    def changedSet = [] as Set   // use a Set to avoid duplicates
+                        def changedSet = [] as Set   // use a Set to avoid duplicates
 
-                    if (baseRef) {
-                        def diffOut = sh(
-                            script: "git diff --name-only ${baseRef}...HEAD 2>/dev/null || true",
-                            returnStdout: true
-                        ).trim()
+                        if (baseRef) {
+                            def diffOut = sh(
+                                script: "git diff --name-only ${baseRef}...HEAD 2>/dev/null || true",
+                                returnStdout: true
+                            ).trim()
 
-                        // Walk every changed file and extract the service name.
-                        //   services/frontend/src/App.js  →  frontend
-                        //   services/node-backend/routes/user.js  →  node-backend
-                        diffOut.split('\n').each { filePath ->
-                            if (!filePath) return
-                            def parts = filePath.tokenize('/')
-                            // Must be  services/<svc>/...  (at least two tokens after root)
-                            if (parts.size() >= 2 && parts[0] == 'services') {
-                                def candidate = parts[1]
-                                if (ALL_SERVICES.containsKey(candidate)) {
-                                    changedSet << candidate
+                            // Walk every changed file and extract the service name.
+                            //   services/frontend/src/App.js  →  frontend
+                            //   services/node-backend/routes/user.js  →  node-backend
+                            diffOut.split('\n').each { filePath ->
+                                if (!filePath) return
+                                def parts = filePath.tokenize('/')
+                                // Must be  services/<svc>/...  (at least two tokens after root)
+                                if (parts.size() >= 2 && parts[0] == 'services') {
+                                    def candidate = parts[1]
+                                    if (ALL_SERVICES.containsKey(candidate)) {
+                                        changedSet << candidate
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    if (changedSet.isEmpty()) {
-                        echo 'No specific service changes detected (or first build) — building ALL services.'
-                        changedSet = ALL_SERVICES.keySet() as Set
-                    }
+                        if (changedSet.isEmpty()) {
+                            echo 'No specific service changes detected (or first build) — building ALL services.'
+                            changedSet = ALL_SERVICES.keySet() as Set
+                        }
 
-                    env.SERVICES_TO_BUILD = changedSet.join(',')
-                    echo "Services to process this run: ${env.SERVICES_TO_BUILD}"
+                        env.SERVICES_TO_BUILD = changedSet.join(',')
+                        echo "Services to process this run: ${env.SERVICES_TO_BUILD}"
+                    }
                 }
             }
         }
@@ -189,15 +165,32 @@ pipeline {
                 script {
                     env.SERVICES_TO_BUILD.split(',').each { svc ->
                         dir(svcDir(ALL_SERVICES, svc)) {
-                            sh '''
-                                if   [ -f package.json      ]; then
-                                    npm install --legacy-peer-deps
-                                elif [ -f requirements.txt  ]; then
-                                    pip install --user -r requirements.txt
-                                else
-                                    echo "No recognized dependency manifest in $(pwd) — skipping."
-                                fi
-                            '''
+                            def manifestType = 'none'
+                            container('node') {
+                                manifestType = sh(
+                                    script: '''
+                                        if   [ -f package.json     ]; then echo "node"
+                                        elif [ -f requirements.txt ]; then echo "python"
+                                        else                            echo "none"
+                                        fi
+                                    ''',
+                                    returnStdout: true
+                                ).trim()
+                            }
+
+                            if (manifestType == 'node') {
+                                container('node') {
+                                    sh 'npm install --legacy-peer-deps'
+                                }
+                            } else if (manifestType == 'python') {
+                                container('python') {
+                                    sh 'pip install --user -r requirements.txt'
+                                }
+                            } else {
+                                container('node') {
+                                    sh 'echo "No recognized dependency manifest in $(pwd) — skipping."'
+                                }
+                            }
                         }
                     }
                 }
@@ -210,15 +203,32 @@ pipeline {
                 script {
                     env.SERVICES_TO_BUILD.split(',').each { svc ->
                         dir(svcDir(ALL_SERVICES, svc)) {
-                            sh '''
-                                if   [ -f package.json                        ]; then
-                                    npm run build --if-present
-                                elif [ -f setup.py ] || [ -f pyproject.toml   ]; then
-                                    python -m compileall -q .
-                                else
-                                    echo "No build step defined for $(pwd) — skipping."
-                                fi
-                            '''
+                            def buildType = 'none'
+                            container('node') {
+                                buildType = sh(
+                                    script: '''
+                                        if   [ -f package.json                        ]; then echo "node"
+                                        elif [ -f setup.py ] || [ -f pyproject.toml   ]; then echo "python"
+                                        else                                              echo "none"
+                                        fi
+                                    ''',
+                                    returnStdout: true
+                                ).trim()
+                            }
+
+                            if (buildType == 'node') {
+                                container('node') {
+                                    sh 'npm run build --if-present'
+                                }
+                            } else if (buildType == 'python') {
+                                container('python') {
+                                    sh 'python -m compileall -q .'
+                                }
+                            } else {
+                                container('node') {
+                                    sh 'echo "No build step defined for $(pwd) — skipping."'
+                                }
+                            }
                         }
                     }
                 }
@@ -231,17 +241,36 @@ pipeline {
                 script {
                     env.SERVICES_TO_BUILD.split(',').each { svc ->
                         dir(svcDir(ALL_SERVICES, svc)) {
-                            sh '''
-                                if   [ -f package.json     ]; then
-                                    npm test -- --ci \
-                                        --reporters=default \
-                                        --reporters=jest-junit || exit 1
-                                elif [ -f requirements.txt ]; then
-                                    python -m pytest --junitxml=test-results.xml || exit 1
-                                else
-                                    echo "No tests defined for $(pwd) — skipping."
-                                fi
-                            '''
+                            def testType = 'none'
+                            container('node') {
+                                testType = sh(
+                                    script: '''
+                                        if   [ -f package.json     ]; then echo "node"
+                                        elif [ -f requirements.txt ]; then echo "python"
+                                        else                            echo "none"
+                                        fi
+                                    ''',
+                                    returnStdout: true
+                                ).trim()
+                            }
+
+                            if (testType == 'node') {
+                                container('node') {
+                                    sh '''
+                                        npm test -- --ci \
+                                            --reporters=default \
+                                            --reporters=jest-junit || exit 1
+                                    '''
+                                }
+                            } else if (testType == 'python') {
+                                container('python') {
+                                    sh 'python -m pytest --junitxml=test-results.xml || exit 1'
+                                }
+                            } else {
+                                container('node') {
+                                    sh 'echo "No tests defined for $(pwd) — skipping."'
+                                }
+                            }
                         }
                     }
                 }
@@ -259,18 +288,20 @@ pipeline {
         //         withSonarQubeEnv() so Jenkins resolves it at compile time.
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('sonarqube-admin') {
-                    withCredentials([string(credentialsId: env.SONAR_TOKEN_ID,
-                                            variable: 'SONAR_TOKEN')]) {
-                        script {
-                            env.SERVICES_TO_BUILD.split(',').each { svc ->
-                                dir(svcDir(ALL_SERVICES, svc)) {
-                                    sh """
-                                        sonar-scanner \
-                                          -Dsonar.projectKey=merch-${svc} \
-                                          -Dsonar.sources=. \
-                                          -Dsonar.login=\$SONAR_TOKEN
-                                    """
+                container('node') {
+                    withSonarQubeEnv('sonarqube-admin') {
+                        withCredentials([string(credentialsId: env.SONAR_TOKEN_ID,
+                                                variable: 'SONAR_TOKEN')]) {
+                            script {
+                                env.SERVICES_TO_BUILD.split(',').each { svc ->
+                                    dir(svcDir(ALL_SERVICES, svc)) {
+                                        sh """
+                                            sonar-scanner \
+                                              -Dsonar.projectKey=merch-${svc} \
+                                              -Dsonar.sources=. \
+                                              -Dsonar.login=\$SONAR_TOKEN
+                                        """
+                                    }
                                 }
                             }
                         }
@@ -313,21 +344,21 @@ pipeline {
                         def imageRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:${env.IMAGE_TAG}"
 
                         parallelBuilds["kaniko-${svc}"] = {
-                            podTemplate(yaml: kanikoPodYaml(svc)) {
-                                node(POD_LABEL) {
+                            node('devops-agent') {
+                                container('node') {
                                     checkout scm
-                                    container('kaniko') {
-                                        sh """
-                                            /kaniko/executor \
-                                              --context=\$(pwd)/${svcPath} \
-                                              --dockerfile=\$(pwd)/${svcPath}/Dockerfile \
-                                              --destination=${imageRef} \
-                                              --cache=true \
-                                              --cache-ttl=168h
-                                        """
-                                    }
-                                    echo "✔ Pushed ${imageRef} to Nexus."
                                 }
+                                container('kaniko') {
+                                    sh """
+                                        /kaniko/executor \
+                                          --context=\$(pwd)/${svcPath} \
+                                          --dockerfile=\$(pwd)/${svcPath}/Dockerfile \
+                                          --destination=${imageRef} \
+                                          --cache=true \
+                                          --cache-ttl=168h
+                                    """
+                                }
+                                echo "✔ Pushed ${imageRef} to Nexus."
                             }
                         }
                     }
@@ -349,46 +380,48 @@ pipeline {
         stage('Update Config Repository') {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
-                withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID,
-                                                  usernameVariable: 'GIT_USER',
-                                                  passwordVariable: 'GIT_TOKEN')]) {
-                    script {
-                        // FIX #11: Build authenticated URL in Groovy — safe even
-                        //          when the token contains special characters.
-                        def repoHost    = env.CONFIG_REPO_URL.replaceFirst('https://', '')
-                        def authedUrl   = "https://\${GIT_USER}:\${GIT_TOKEN}@${repoHost}"
-
-                        sh """
-                            rm -rf ${env.CONFIG_REPO_DIR}
-                            git clone --depth=1 --branch ${env.CONFIG_REPO_BRANCH} \
-                                ${authedUrl} \
-                                ${env.CONFIG_REPO_DIR}
-                        """
-
-                        dir(env.CONFIG_REPO_DIR) {
-                            env.SERVICES_TO_BUILD.split(',').each { svc ->
-                                // ⚠ Adjust this path to match your config repo layout.
-                                def manifestPath = "apps/${svc}/kustomization.yaml"
-
-                                // FIX #8: Correct yq v4 syntax — updates ONLY newTag
-                                //         for the matching image entry; leaves the rest
-                                //         of the YAML untouched.
-                                sh """
-                                    yq -i '(.images[] | select(.name == "${svc}")).newTag = "${env.IMAGE_TAG}"' \
-                                        ${manifestPath}
-                                """
-
-                                echo "Updated ${manifestPath} → newTag = ${env.IMAGE_TAG}"
-                            }
+                container('node') {
+                    withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID,
+                                                      usernameVariable: 'GIT_USER',
+                                                      passwordVariable: 'GIT_TOKEN')]) {
+                        script {
+                            // FIX #11: Build authenticated URL in Groovy — safe even
+                            //          when the token contains special characters.
+                            def repoHost    = env.CONFIG_REPO_URL.replaceFirst('https://', '')
+                            def authedUrl   = "https://\${GIT_USER}:\${GIT_TOKEN}@${repoHost}"
 
                             sh """
-                                git config user.email "jenkins-ci@merch.local"
-                                git config user.name  "jenkins-ci"
-                                git add -A
-                                git diff --cached --quiet || git commit -m \
-                                    "ci: bump image tag(s) → ${env.IMAGE_TAG} for [${env.SERVICES_TO_BUILD}] (build #${env.BUILD_NUMBER})"
-                                git push origin ${env.CONFIG_REPO_BRANCH}
+                                rm -rf ${env.CONFIG_REPO_DIR}
+                                git clone --depth=1 --branch ${env.CONFIG_REPO_BRANCH} \
+                                    ${authedUrl} \
+                                    ${env.CONFIG_REPO_DIR}
                             """
+
+                            dir(env.CONFIG_REPO_DIR) {
+                                env.SERVICES_TO_BUILD.split(',').each { svc ->
+                                    // ⚠ Adjust this path to match your config repo layout.
+                                    def manifestPath = "apps/${svc}/kustomization.yaml"
+
+                                    // FIX #8: Correct yq v4 syntax — updates ONLY newTag
+                                    //         for the matching image entry; leaves the rest
+                                    //         of the YAML untouched.
+                                    sh """
+                                        yq -i '(.images[] | select(.name == "${svc}")).newTag = "${env.IMAGE_TAG}"' \
+                                            ${manifestPath}
+                                    """
+
+                                    echo "Updated ${manifestPath} → newTag = ${env.IMAGE_TAG}"
+                                }
+
+                                sh """
+                                    git config user.email "jenkins-ci@merch.local"
+                                    git config user.name  "jenkins-ci"
+                                    git add -A
+                                    git diff --cached --quiet || git commit -m \
+                                        "ci: bump image tag(s) → ${env.IMAGE_TAG} for [${env.SERVICES_TO_BUILD}] (build #${env.BUILD_NUMBER})"
+                                    git push origin ${env.CONFIG_REPO_BRANCH}
+                                """
+                            }
                         }
                     }
                 }
