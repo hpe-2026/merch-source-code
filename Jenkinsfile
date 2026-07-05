@@ -83,7 +83,7 @@ pipeline {
         // ── Checkout ──────────────────────────────────────────────────────────
         stage('Checkout') {
             steps {
-                container('node') {
+                container('devops') {
                     checkout scm
                     script {
                         env.GIT_SHORT_SHA = sh(
@@ -106,7 +106,7 @@ pipeline {
         //         the undefined `file` variable that crashed the original.
         stage('Detect Changed Services') {
             steps {
-                container('node') {
+                container('devops') {
                     script {
                         def baseRef
 
@@ -166,7 +166,7 @@ pipeline {
                     env.SERVICES_TO_BUILD.split(',').each { svc ->
                         dir(svcDir(ALL_SERVICES, svc)) {
                             def manifestType = 'none'
-                            container('node') {
+                            container('devops') {
                                 manifestType = sh(
                                     script: '''
                                         if   [ -f package.json     ]; then echo "node"
@@ -179,15 +179,15 @@ pipeline {
                             }
 
                             if (manifestType == 'node') {
-                                container('node') {
+                                container('devops') {
                                     sh 'npm install --legacy-peer-deps'
                                 }
                             } else if (manifestType == 'python') {
-                                container('python') {
-                                    sh 'pip install --user -r requirements.txt'
+                                container('devops') {
+                                    sh 'python3 -m pip install --user -r requirements.txt'
                                 }
                             } else {
-                                container('node') {
+                                container('devops') {
                                     sh 'echo "No recognized dependency manifest in $(pwd) — skipping."'
                                 }
                             }
@@ -204,7 +204,7 @@ pipeline {
                     env.SERVICES_TO_BUILD.split(',').each { svc ->
                         dir(svcDir(ALL_SERVICES, svc)) {
                             def buildType = 'none'
-                            container('node') {
+                            container('devops') {
                                 buildType = sh(
                                     script: '''
                                         if   [ -f package.json                        ]; then echo "node"
@@ -217,15 +217,15 @@ pipeline {
                             }
 
                             if (buildType == 'node') {
-                                container('node') {
+                                container('devops') {
                                     sh 'npm run build --if-present'
                                 }
                             } else if (buildType == 'python') {
-                                container('python') {
-                                    sh 'python -m compileall -q .'
+                                container('devops') {
+                                    sh 'python3 -m compileall -q .'
                                 }
                             } else {
-                                container('node') {
+                                container('devops') {
                                     sh 'echo "No build step defined for $(pwd) — skipping."'
                                 }
                             }
@@ -242,7 +242,7 @@ pipeline {
                     env.SERVICES_TO_BUILD.split(',').each { svc ->
                         dir(svcDir(ALL_SERVICES, svc)) {
                             def testType = 'none'
-                            container('node') {
+                            container('devops') {
                                 testType = sh(
                                     script: '''
                                         if   [ -f package.json     ]; then echo "node"
@@ -255,7 +255,7 @@ pipeline {
                             }
 
                             if (testType == 'node') {
-                                container('node') {
+                                container('devops') {
                                     sh '''
                                         npm test -- --ci \
                                             --reporters=default \
@@ -263,11 +263,11 @@ pipeline {
                                     '''
                                 }
                             } else if (testType == 'python') {
-                                container('python') {
-                                    sh 'python -m pytest --junitxml=test-results.xml || exit 1'
+                                container('devops') {
+                                    sh 'python3 -m pytest --junitxml=test-results.xml || exit 1'
                                 }
                             } else {
-                                container('node') {
+                                container('devops') {
                                     sh 'echo "No tests defined for $(pwd) — skipping."'
                                 }
                             }
@@ -288,7 +288,7 @@ pipeline {
         //         withSonarQubeEnv() so Jenkins resolves it at compile time.
         stage('SonarQube Analysis') {
             steps {
-                container('node') {
+                container('devops') {
                     withSonarQubeEnv('sonarqube-admin') {
                         withCredentials([string(credentialsId: env.SONAR_TOKEN_ID,
                                                 variable: 'SONAR_TOKEN')]) {
@@ -344,22 +344,17 @@ pipeline {
                         def imageRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:${env.IMAGE_TAG}"
 
                         parallelBuilds["kaniko-${svc}"] = {
-                            node('devops-agent') {
-                                container('node') {
-                                    checkout scm
-                                }
-                                container('kaniko') {
-                                    sh """
-                                        /kaniko/executor \
-                                          --context=\$(pwd)/${svcPath} \
-                                          --dockerfile=\$(pwd)/${svcPath}/Dockerfile \
-                                          --destination=${imageRef} \
-                                          --cache=true \
-                                          --cache-ttl=168h
-                                    """
-                                }
-                                echo "✔ Pushed ${imageRef} to Nexus."
+                            container('devops') {
+                                sh """
+                                    /kaniko/executor \
+                                      --context=\$(pwd)/${svcPath} \
+                                      --dockerfile=\$(pwd)/${svcPath}/Dockerfile \
+                                      --destination=${imageRef} \
+                                      --cache=true \
+                                      --cache-ttl=168h
+                                """
                             }
+                            echo "✔ Pushed ${imageRef} to Nexus."
                         }
                     }
 
@@ -380,7 +375,7 @@ pipeline {
         stage('Update Config Repository') {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
-                container('node') {
+                container('devops') {
                     withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID,
                                                       usernameVariable: 'GIT_USER',
                                                       passwordVariable: 'GIT_TOKEN')]) {
