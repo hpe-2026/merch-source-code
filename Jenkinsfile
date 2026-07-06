@@ -582,7 +582,12 @@ pipeline {
                             }
 
                             container('kaniko') {
-                                // Retry scoped strictly to the Kaniko executor command
+                                // Retry scoped strictly to the Kaniko executor command  
+                                // 
+                                // CRITICAL FLAGS EXPLAINED:
+                                // --ignore-path: Prevents Kaniko from overwriting these paths
+                                //                during base image extraction. Without these,
+                                //                Kaniko replaces /bin/sh and breaks Jenkins.
                                 retry(3) {
                                     sh """
                                         /kaniko/executor \
@@ -595,8 +600,8 @@ pipeline {
                                           --cache=true \
                                           --cache-repo="${cacheRepo}" \
                                           --cache-ttl=168h \
-                                          --snapshotMode=redo \
-                                          --use-new-run
+                                          --ignore-path=/busybox \
+                                          --ignore-path=/kaniko
                                     """
                                 }
                             }
