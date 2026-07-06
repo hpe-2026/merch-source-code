@@ -1,164 +1,75 @@
 # Keycloak Configuration
 
-This directory contains Keycloak realm configuration for local development.
+This directory contains the Keycloak realm configuration for the NITTE Merchandise Shop.
 
-## Current State
+## Files
 
-`nitte-realm.json` does not exist yet. You must either:
-1. Recover it from the original repository, OR
-2. Configure the realm manually and export it (instructions below)
+| File | Purpose |
+|------|---------|
+| `nitte-realm.json` | Full realm export — auto-imported on first boot |
+| `keycloak-bootstrap.sh` | Post-start script to set master realm theme + TOTP on admin |
+| `themes/nitte/` | Custom login theme (login page, OTP page, CSS) |
 
-## First-Time Realm Setup
+## How It Works
 
-After running `docker compose up`, Keycloak starts with only the `master` realm.
-You must create the `nitte-realm` manually:
+`docker-compose.yml` is configured to:
+1. Mount `nitte-realm.json` into Keycloak's import directory
+2. Run with `--import-realm` flag
+3. Mount the custom `nitte` theme
 
-### Step 1 — Open Keycloak Admin UI
+On first start (or after `docker compose down -v`), Keycloak imports the realm
+automatically. No manual setup needed.
 
-http://localhost:8080
+## Pre-configured Realm: `nitte-realm`
 
-Login: `admin` / the value of `KEYCLOAK_ADMIN_PASSWORD` in your `.env` file (default: `admin_password`)
+### Client: `nitte-client`
+- Confidential (client secret: `nitte-client-secret`)
+- Standard flow + Direct access grants + Service accounts enabled
+- Redirect URIs: `*`
+- Protocol mappers: realm roles, client roles, username, merchantId attribute
 
-### Step 2 — Create the Realm
+### Roles
+| Role | Description |
+|------|-------------|
+| `platform-admin` | Full system access |
+| `admin-internal` | Internal DevOps admin (2FA required) |
+| `alumni-verified` | Verified alumni with purchasing access |
+| `merchant-admin` | Merchant administrator |
+| `merchant-staff` | Merchant staff (limited) |
+| `non_alumni` | Non-alumni user (limited access) |
+| `mongo_writer` | Internal service role for MongoDB writes |
+| `internal-user` | Internal NITTE staff |
 
-1. Click the dropdown at top-left (shows "Keycloak" or "master")
-2. Click **Create realm**
-3. Set Realm name: `nitte-realm`
-4. Click **Create**
+### Test Users
+| Username | Password | Role |
+|----------|----------|------|
+| `admin@nitte.edu` | `admin@123` | platform-admin |
+| `alumni@nitte.edu` | `alumni@123` | alumni-verified |
+| `guest_user` | `Guest@123` | non_alumni |
+| `internal-admin@nitte.ac.in` | `InternalAdmin@123` | admin-internal |
+| `amazon-merchant@amazon.com` | `Amazon@123` | merchant-admin |
+| `flipkart-merchant@flipkart.com` | `Flipkart@123` | merchant-admin |
+| `merchant-admin@nitte.edu` | `MerchantAdmin@123` | merchant-admin |
 
-### Step 3 — Create the Client
+### Service Accounts
+- `service-account-nitte-client` — realm role `mongo_writer`, manages users
+- `service-account-nexus-client` — view realm/clients/users
 
-1. In the `nitte-realm`, go to **Clients** → **Create client**
-2. Client ID: `nitte-client`
-3. Client type: `OpenID Connect`
-4. Click **Next**
-5. Enable **Client authentication** (makes it confidential)
-6. Enable **Direct access grants** (needed for username/password login in dev)
-7. Set Valid redirect URIs:
-   - `http://localhost:5173/*`
-   - `http://localhost:5174/*`
-   - `http://localhost:5175/*`
-   - `http://localhost:3000/*`
-8. Set Web origins: `*` (dev only — lock this down in production)
-9. Click **Save**
+## Re-importing the Realm
 
-### Step 4 — Get the Client Secret
+The import only triggers when the realm doesn't exist in the database.
+To force re-import:
 
-1. Go to **Clients** → `nitte-client` → **Credentials** tab
-2. Copy the **Client secret**
-3. Add it to your `.env` file:
-   ```
-   KEYCLOAK_CLIENT_SECRET=<the-secret-you-copied>
-   ```
-
-### Step 5 — Create Realm Roles
-
-Go to **Realm roles** → **Create role** for each of the following:
-- `alumni`
-- `alumni-verified`
-- `merchant`
-- `merchant-admin`
-- `platform-admin`
-- `admin-internal`
-- `internal-user`
-
-### Step 6 — Create a Test User
-
-1. Go to **Users** → **Create new user**
-2. Set username and email (e.g. `test@nitte.ac.in`)
-3. Go to **Credentials** tab → Set password → Disable "Temporary"
-4. Go to **Role mappings** → Assign `alumni-verified`
-
-### Step 7 — Export the Realm (save for future use)
-
-1. Go to **Realm settings** → **Action** (top right) → **Partial export**
-2. Enable: "Export clients" and "Export groups and roles"
-3. Click **Export**
-4. Save the downloaded file as `keycloak/nitte-realm.json`
-
-### Step 8 — Enable Automated Import
-
-Once `nitte-realm.json` exists, edit `docker-compose.yml`:
-
-1. Uncomment the volume mount in the keycloak service:
-   ```yaml
-   - ./keycloak/nitte-realm.json:/opt/keycloak/data/import/nitte-realm.json:ro
-   ```
-
-2. Change the command to include `--import-realm`:
-   ```yaml
-   command: >
-     start-dev
-     --import-realm
-   ```
-
-3. Run `docker compose down -v && docker compose up` to start fresh with the imported realm.
-
-**Important:** `--import-realm` only imports if the realm does not already exist in the database.
-So `docker compose down -v` (which wipes the keycloak-data volume) is needed to re-trigger import.
-
----
-
-## Keycloak Event Listener SPI (keycloak-event-listener)
-
-The `keycloak-event-listener/` Java project (in the source repository root) is a
-Keycloak Server Provider Interface plugin. When built, it produces a JAR that
-Keycloak loads at startup. It forwards security events (login failures, password
-changes, registrations) to the notification-service via HTTP POST.
-
-**It is not required for Keycloak to start or for authentication to work.**
-It is an optional enhancement for security event forwarding.
-
-### How to Build the Event Listener JAR
-
-#### Prerequisites
-- JDK 17 or 21 (not JDK 25 — Keycloak 24 was built against JDK 21)
-- Maven 3.8+
-
-#### Install Maven (Ubuntu/Debian)
 ```bash
-sudo apt-get update
-sudo apt-get install -y maven
+docker compose down -v   # wipes keycloak-data volume
+docker compose up -d keycloak
 ```
 
-Verify: `mvn --version`
+## Keycloak Event Listener (optional)
 
-#### Build
-```bash
-cd keycloak-event-listener
-mvn clean package -DskipTests
-```
+The `keycloak-event-listener/` project in the repo root is an SPI plugin that
+forwards security events to the notification-service. It requires:
+- JDK 17/21 + Maven to build
+- The JAR mounted into `/opt/keycloak/providers/`
 
-The JAR will be at:
-```
-keycloak-event-listener/target/keycloak-event-listener-1.0.0.jar
-```
-
-Verify it is a real JAR (not a directory):
-```bash
-file keycloak-event-listener/target/keycloak-event-listener-1.0.0.jar
-# Expected: Java archive data (JAR)
-
-jar tf keycloak-event-listener/target/keycloak-event-listener-1.0.0.jar | head -10
-# Expected: META-INF/MANIFEST.MF  and class files
-```
-
-#### Enable in Docker Compose
-
-Once the JAR exists, add to the keycloak service volumes:
-```yaml
-- ./keycloak-event-listener/target/keycloak-event-listener-1.0.0.jar:/opt/keycloak/providers/keycloak-event-listener-1.0.0.jar:ro
-```
-
-Keycloak automatically scans `/opt/keycloak/providers/` at startup and loads any JARs it finds there.
-The SPI implementation is picked up via Java ServiceLoader using the file at:
-`META-INF/services/org.keycloak.events.EventListenerProviderFactory`
-
-#### Configure in Keycloak UI (after adding the JAR)
-
-1. Restart Keycloak with the JAR mounted
-2. Go to **Realm settings** → **Events** → **Event listeners**
-3. Add your custom listener ID (defined in your `EventListenerProviderFactory` implementation)
-4. Save
-
-The listener will then POST events to `http://notification-service:9100/api/v1/events`
+Not needed for basic operation — only for security event forwarding.
