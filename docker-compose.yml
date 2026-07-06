@@ -7,7 +7,7 @@
 #   It is NEVER used in production. Production runs on Kubernetes via ArgoCD.
 #
 # WHAT IS INCLUDED:
-#   Infrastructure : MongoDB, Kafka, Zookeeper, Keycloak, MinIO, Jaeger
+#   Infrastructure : MongoDB (sharded: 2 shards + config server + mongos), Kafka, Zookeeper, Keycloak, MinIO, Jaeger
 #   Applications   : node-backend, python-service, notification-service
 #   Frontends      : frontend, admin-dashboard, merchant-portal
 #
@@ -37,7 +37,7 @@
 #   MinIO Console    : http://localhost:9001  (minioadmin / change-this-minio-secret)
 #   Jaeger UI        : http://localhost:16686
 #   Kafka UI         : http://localhost:8090
-#   MongoDB          : localhost:27017
+#   MongoDB          : localhost:27017 (via mongos router)
 #
 # STARTUP ORDER:
 #   Infra first (MongoDB, Kafka, Keycloak, MinIO, Jaeger) → then backends → then frontends.
@@ -52,7 +52,9 @@ networks:
     driver: bridge
 
 volumes:
-  mongodb-data:
+  mongo-configsvr-data:
+  mongo-shard1-data:
+  mongo-shard2-data:
   zookeeper-data:
   kafka-data:
   keycloak-data:
@@ -65,39 +67,174 @@ volumes:
 services:
 
   # ---------------------------------------------------------------------------
-  # MongoDB — primary database for both node-backend and python-service.
+  # MongoDB Sharded Cluster
   #
-  # WHY ONE INSTANCE FOR DEV?
-  #   Running a full replica set or sharded cluster locally adds significant
-  #   complexity. A standalone instance is correct for development.
-  #   The sharding-init.js script in /database is for the production Kubernetes
-  #   deployment only (runs against a mongos router, not a standalone mongod).
+  # Architecture:
+  #   mongo-configsvr  → config server replica set (stores cluster metadata)
+  #   mongo-shard1     → shard 1 replica set (South/West India regions)
+  #   mongo-shard2     → shard 2 replica set (North/East India regions)
+  #   mongos           → query router (applications connect here on port 27017)
+  #   mongo-init       → runs sharding-init.js to configure zones and seed data
+  #
+  # Applications connect to mongos on port 27017, same as before.
+  # The sharding is transparent to the application layer.
   #
   # DATABASE NAME: nitte_merch
   #   Both node-backend and python-service MUST use the same database name.
-  #   This is enforced in their .env files and config files.
   # ---------------------------------------------------------------------------
-  mongodb:
+
+  # Config Server — stores cluster metadata (shard map, chunk distribution)
+  mongo-configsvr:
     image: mongo:7.0
-    container_name: nitte-mongodb
+    container_name: nitte-mongo-configsvr
     restart: unless-stopped
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_ROOT_PASSWORD:-change-this-mongo-root-password}
-      MONGO_INITDB_DATABASE: nitte_merch
-    ports:
-      - "27017:27017"
+    command: mongod --configsvr --replSet configReplSet --port 27019 --bind_ip_all
     volumes:
-      - mongodb-data:/data/db
+      - mongo-configsvr-data:/data/db
     networks:
       - nitte-net
     healthcheck:
-      # mongosh is present in mongo:7.0. db.adminCommand('ping').ok returns 1 on success.
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      test: ["CMD", "mongosh", "--port", "27019", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  # Shard 1 — South/West India region data
+  mongo-shard1:
+    image: mongo:7.0
+    container_name: nitte-mongo-shard1
+    restart: unless-stopped
+    command: mongod --shardsvr --replSet shard1 --port 27018 --bind_ip_all
+    volumes:
+      - mongo-shard1-data:/data/db
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27018", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Shard 2 — North/East India region data
+  mongo-shard2:
+    image: mongo:7.0
+    container_name: nitte-mongo-shard2
+    restart: unless-stopped
+    command: mongod --shardsvr --replSet shard2 --port 27019 --bind_ip_all
+    volumes:
+      - mongo-shard2-data:/data/db
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27019", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Replica Set Initializer — must complete BEFORE mongos can start.
+  # Initiates all three replica sets (configsvr, shard1, shard2) so that
+  # mongos can connect to an initialized configReplSet.
+  mongo-rs-init:
+    image: mongo:7.0
+    container_name: nitte-mongo-rs-init
+    restart: "no"
+    depends_on:
+      mongo-configsvr:
+        condition: service_healthy
+      mongo-shard1:
+        condition: service_healthy
+      mongo-shard2:
+        condition: service_healthy
+    networks:
+      - nitte-net
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        echo "[rs-init] Initializing config server replica set..."
+        mongosh --host mongo-configsvr --port 27019 --eval '
+          rs.initiate({ _id: "configReplSet", configsvr: true, members: [{ _id: 0, host: "mongo-configsvr:27019" }] })
+        ' || echo "  (already initialized)"
+
+        echo "[rs-init] Waiting for configsvr primary..."
+        sleep 5
+        mongosh --host mongo-configsvr --port 27019 --eval '
+          while (!rs.isMaster().ismaster) { sleep(1000); }
+          print("configsvr primary elected");
+        '
+
+        echo "[rs-init] Initializing shard1 replica set..."
+        mongosh --host mongo-shard1 --port 27018 --eval '
+          rs.initiate({ _id: "shard1", members: [{ _id: 0, host: "mongo-shard1:27018" }] })
+        ' || echo "  (already initialized)"
+
+        echo "[rs-init] Initializing shard2 replica set..."
+        mongosh --host mongo-shard2 --port 27019 --eval '
+          rs.initiate({ _id: "shard2", members: [{ _id: 0, host: "mongo-shard2:27019" }] })
+        ' || echo "  (already initialized)"
+
+        echo "[rs-init] Waiting for shard primaries..."
+        sleep 5
+        mongosh --host mongo-shard1 --port 27018 --eval 'while (!rs.isMaster().ismaster) { sleep(1000); } print("shard1 ready");'
+        mongosh --host mongo-shard2 --port 27019 --eval 'while (!rs.isMaster().ismaster) { sleep(1000); } print("shard2 ready");'
+
+        echo "[rs-init] All replica sets initialized and primaries elected."
+    healthcheck:
+      # This container exits — use a test that succeeds only after the entrypoint finishes.
+      # Docker marks exited containers as healthy if they exited 0.
+      test: ["CMD-SHELL", "exit 0"]
+      interval: 5s
+      timeout: 2s
+      retries: 1
+      start_period: 60s
+
+  # Mongos Router — applications connect here (port 27017)
+  mongos:
+    image: mongo:7.0
+    container_name: nitte-mongos
+    restart: unless-stopped
+    command: mongos --configdb configReplSet/mongo-configsvr:27019 --port 27017 --bind_ip_all
+    depends_on:
+      mongo-rs-init:
+        condition: service_completed_successfully
+    ports:
+      - "27017:27017"
+    networks:
+      - nitte-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # MongoDB Sharding Initializer — adds shards to mongos, configures zones,
+  # creates collections and indexes, seeds data. Runs once and exits.
+  mongo-init:
+    image: mongo:7.0
+    container_name: nitte-mongo-init
+    restart: "no"
+    depends_on:
+      mongos:
+        condition: service_healthy
+    volumes:
+      - ./database:/scripts:ro
+    networks:
+      - nitte-net
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        echo "── Running sharding-init.js against mongos ──"
+        mongosh --host mongos --port 27017 \
+          --eval "var APP_WRITER_PASS='app_writer_dev'; var APP_READER_PASS='app_reader_dev';" \
+          /scripts/sharding-init.js
+        echo "── MongoDB Sharded Cluster Fully Initialized ──"
 
   # ---------------------------------------------------------------------------
   # Zookeeper — required by Kafka for cluster coordination.
@@ -432,7 +569,7 @@ services:
     container_name: nitte-node-backend
     restart: unless-stopped
     depends_on:
-      mongodb:
+      mongos:
         condition: service_healthy
       kafka:
         condition: service_healthy
@@ -448,7 +585,7 @@ services:
     environment:
       NODE_ENV: development
 
-      MONGODB_URL: mongodb://admin:${MONGODB_ROOT_PASSWORD:-change-this-mongo-root-password}@mongodb:27017/nitte_merch?authSource=admin
+      MONGODB_URL: mongodb://mongos:27017/nitte_merch
 
       # REQUIRED — must be set in your .env file. Will error at startup if missing.
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env — see .env.example}
@@ -503,7 +640,7 @@ services:
     container_name: nitte-python-service
     restart: unless-stopped
     depends_on:
-      mongodb:
+      mongos:
         condition: service_healthy
       jaeger:
         # service_started for the same reason as node-backend above:
@@ -514,7 +651,7 @@ services:
       PORT: 8000
       HOST: 0.0.0.0
 
-      MONGODB_URL: mongodb://admin:${MONGODB_ROOT_PASSWORD:-change-this-mongo-root-password}@mongodb:27017
+      MONGODB_URL: mongodb://mongos:27017
       DATABASE_NAME: nitte_merch
 
       API_GATEWAY_URL: http://node-backend:3000
