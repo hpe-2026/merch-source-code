@@ -733,7 +733,20 @@ spec:
                                           --cache-repo="${cacheRepo}" \\
                                           --cache-ttl=168h \\
                                           --log-format=text \\
-                                          --verbosity=warn
+                                          --verbosity=warn \\
+                                          --cleanup
+                                        
+                                        # Kaniko's --cleanup deletes files extracted from the base image,
+                                        # which brutally removes /bin/sh and breaks Jenkins's ability to run 
+                                        # the NEXT `sh` step in this container.
+                                        # Since the current shell is still in memory, we can use the static 
+                                        # busybox binary to restore the critical symlinks before we exit!
+                                        /busybox/sh -c '
+                                            /busybox/mkdir -p /bin /usr/bin
+                                            /busybox/ln -sf /busybox/sh /bin/sh
+                                            /busybox/ln -sf /busybox/cat /bin/cat
+                                            /busybox/ln -sf /busybox/env /usr/bin/env
+                                        '
                                     """
                                 }
                             }
