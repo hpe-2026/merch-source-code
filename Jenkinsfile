@@ -260,10 +260,27 @@ pipeline {
         // ── Detect Changed Services ───────────────────────────────────────────
         // git fetch + git diff run in container('devops') (uid 0).
         // safe.directory registered in Setup Tools allows these to run cleanly.
+        //
+        // ── BOOTSTRAP AWARENESS ───────────────────────────────────────────────
+        // On the very first pipeline run Nexus is empty. git diff only shows
+        // files changed in the current commit, so it would miss every service
+        // that has not been edited recently. Without the bootstrap check those
+        // services would never get an image into Nexus.
+        //
+        // After computing the git-diff set we therefore query the Nexus Docker
+        // Registry v2 API for EVERY service in ALL_SERVICES:
+        //
+        //   GET http://<registry>/v2/<repo>/<service>/tags/list
+        //   → 200 + {"tags":[...]}  means at least one image exists → already bootstrapped
+        //   → 404 / empty tags      means no image exists           → must build now
+        //
+        // The two sets are merged and deduplicated. Downstream stages see only
+        // the final SERVICES_TO_BUILD env var — they require zero changes.
         stage('Detect Changed Services') {
             steps {
                 container('devops') {
                     script {
+                        // ── Step 1: git diff → changedSet ─────────────────────
                         def baseRef
 
                         if (env.IS_PR == 'true') {
@@ -304,12 +321,77 @@ pipeline {
                             changedSet = ALL_SERVICES.keySet() as Set
                         }
 
-                        env.SERVICES_TO_BUILD = changedSet.join(',')
+                        // ── Step 2: Nexus bootstrap check ─────────────────────
+                        // Only performed on main builds. PR builds skip image
+                        // creation entirely, so there is no point querying Nexus.
+                        def missingInNexus = [] as Set
+
+                        if (env.IS_MAIN == 'true') {
+                            echo '──── Checking Nexus for unbootstrapped services ────'
+                            withCredentials([usernamePassword(
+                                    credentialsId: env.NEXUS_CRED_ID,
+                                    usernameVariable: 'NEXUS_USER',
+                                    passwordVariable: 'NEXUS_PASS')]) {
+
+                                ALL_SERVICES.keySet().each { svc ->
+                                    // Nexus Docker Registry v2 tags/list endpoint.
+                                    // --fail   → curl exits non-zero on 4xx/5xx
+                                    // --silent → suppress progress meter
+                                    // --user   → basic auth (Nexus requires auth
+                                    //            even for hosted repos by default)
+                                    // 2>/dev/null suppresses connection-error noise
+                                    // so that the || echo "" branch is always clean.
+                                    //
+                                    // Response body for a repo with images:
+                                    //   {"name":"merch-docker/python-service","tags":["26-abc","25-def"]}
+                                    // Response body for an empty / missing repo:
+                                    //   HTTP 404  →  curl exits 22 (--fail)
+                                    def tagsJson = sh(
+                                        script: """
+                                            curl --silent --fail \
+                                                 --user "\${NEXUS_USER}:\${NEXUS_PASS}" \
+                                                 "http://${env.NEXUS_REGISTRY}/v2/${env.NEXUS_REPO_NAME}/${svc}/tags/list" \
+                                                 2>/dev/null || echo ""
+                                        """,
+                                        returnStdout: true
+                                    ).trim()
+
+                                    // An empty response (curl got 404/connection error)
+                                    // OR a response with "tags":null / "tags":[]
+                                    // both indicate no image has ever been pushed.
+                                    boolean hasTags = tagsJson
+                                        && tagsJson.contains('"tags"')
+                                        && !tagsJson.contains('"tags":null')
+                                        && !tagsJson.contains('"tags":[]')
+
+                                    if (hasTags) {
+                                        echo "  ✔ ${svc}: image(s) found in Nexus — skip bootstrap"
+                                    } else {
+                                        echo "  ✘ ${svc}: NO image in Nexus — forcing build"
+                                        missingInNexus << svc
+                                    }
+                                }
+                            }
+
+                            if (missingInNexus) {
+                                echo "Bootstrap services (missing from Nexus): ${missingInNexus.join(', ')}"
+                            } else {
+                                echo 'All services are already bootstrapped in Nexus.'
+                            }
+                        }
+
+                        // ── Step 3: Merge + deduplicate ───────────────────────
+                        // Union of git-diff set and Nexus-missing set.
+                        // Using addAll() on a Set gives automatic deduplication.
+                        def finalSet = (changedSet + missingInNexus) as Set
+
+                        env.SERVICES_TO_BUILD = finalSet.join(',')
                         echo "Services to process: ${env.SERVICES_TO_BUILD}"
                     }
                 }
             }
         }
+
 
         // ── Install Dependencies ──────────────────────────────────────────────
         stage('Install Dependencies') {
