@@ -359,10 +359,11 @@ pipeline {
                                     // An empty response (curl got 404/connection error)
                                     // OR a response with "tags":null / "tags":[]
                                     // both indicate no image has ever been pushed.
-                                    boolean hasTags = tagsJson
+                                    boolean hasTags = {tagsJson
                                         && tagsJson.contains('"tags"')
                                         && !tagsJson.contains('"tags":null')
                                         && !tagsJson.contains('"tags":[]')
+                                    }
 
                                     if (hasTags) {
                                         echo "  ✔ ${svc}: image(s) found in Nexus — skip bootstrap"
