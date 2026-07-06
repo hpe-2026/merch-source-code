@@ -563,116 +563,102 @@ pipeline {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
                 script {
-                    // ── Concurrency Limit ─────────────────────────────────────────────
-                    // Configurable batch size to prevent overloading resource-constrained
-                    // environments (like single-node RKE2).
-                    def MAX_PARALLEL_BUILDS = 2
-                    
                     def failedServices = []
                     def servicesList = env.SERVICES_TO_BUILD.split(',') as List
-                    def batches = []
-                    def currentBatch = []
                     
-                    // Distribute services into batches
-                    for (int i = 0; i < servicesList.size(); i++) {
-                        currentBatch.add(servicesList[i])
-                        if (currentBatch.size() == MAX_PARALLEL_BUILDS || i == servicesList.size() - 1) {
-                            batches.add(currentBatch)
-                            currentBatch = []
-                        }
-                    }
-                    
-                    batches.eachWithIndex { batch, batchIdx ->
-                        int batchNum = batchIdx + 1
-                        echo "──── Starting Batch ${batchNum} (Services: ${batch.join(', ')}) ────"
+                    servicesList.each { svcName ->
+                        def svc = svcName
+                        def svcPath = svcDir(ALL_SERVICES, svc)
+                        def imageRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:${env.IMAGE_TAG}"
+                        def cacheRepo = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}-cache"
                         
-                        def batchSteps = [:]
-                        batch.each { svcName ->
-                            def svc = svcName
-                            def svcPath = svcDir(ALL_SERVICES, svc)
-                            def imageRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:${env.IMAGE_TAG}"
-                            def cacheRepo = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}-cache"
-                            
-                            batchSteps[svc] = {
-                                try {
-                                    podTemplate(
-                                        cloud: 'kubernetes',
-                                        namespace: 'system',
-                                        serviceAccount: 'jenkins',
-                                        containers: [
-                                            containerTemplate(
-                                                name: 'kaniko',
-                                                image: 'gcr.io/kaniko-project/executor:debug',
-                                                command: 'sleep',
-                                                args: '99d',
-                                                ttyEnabled: true,
-                                                resourceRequestMemory: '1Gi',
-                                                resourceLimitMemory: '2Gi',
-                                                resourceRequestCpu: '1',
-                                                resourceLimitCpu: '2'
-                                            )
-                                        ],
-                                        volumes: [
-                                            secretVolume(
-                                                mountPath: '/kaniko/.docker',
-                                                secretName: 'nexus-docker-config'
-                                            )
-                                        ],
-                                        workspaceVolume: emptyDirWorkspaceVolume()
-                                    ) {
-                                        node(POD_LABEL) {
-                                            try {
-                                                echo "──── [${svc}] Starting build in dedicated pod ────"
-                                                echo "[${svc}] Dockerfile : ${svcPath}/Dockerfile"
-                                                echo "[${svc}] Context    : ${svcPath}"
-                                                echo "[${svc}] Destination: ${imageRef}"
-                                                
-                                                checkout scm
-                                                
-                                                if (!fileExists(svcPath)) {
-                                                    error "Service directory ${svcPath} does not exist."
-                                                }
-                                                if (!fileExists("${svcPath}/Dockerfile")) {
-                                                    error "Dockerfile not found at ${svcPath}/Dockerfile."
-                                                }
-                                                
-                                                container('kaniko') {
-                                                    retry(3) {
-                                                        sh """
-                                                            /kaniko/executor \
-                                                              --context="\$(pwd)/${svcPath}" \
-                                                              --dockerfile="\$(pwd)/${svcPath}/Dockerfile" \
-                                                              --destination="${imageRef}" \
-                                                              --insecure \
-                                                              --insecure-pull \
-                                                              --skip-tls-verify \
-                                                              --cache=true \
-                                                              --cache-repo="${cacheRepo}" \
-                                                              --cache-ttl=168h
-                                                        """
-                                                    }
-                                                }
-                                                
-                                                echo "✔ [${svc}] Completed successfully"
-                                            } catch (Exception e) {
-                                                echo "✘ [${svc}] Failed: ${e.message}"
-                                                failedServices << svc
+                        echo "=================================================="
+                        echo "Building ${svc}..."
+                        echo "--------------------------------------------------"
+                        
+                        try {
+                            podTemplate(
+                                cloud: 'kubernetes',
+                                namespace: 'system',
+                                serviceAccount: 'jenkins',
+                                containers: [
+                                    containerTemplate(
+                                        name: 'kaniko',
+                                        image: 'gcr.io/kaniko-project/executor:debug',
+                                        command: 'sleep',
+                                        args: '99d',
+                                        ttyEnabled: true,
+                                        resourceRequestMemory: '1Gi',
+                                        resourceLimitMemory: '2Gi',
+                                        resourceRequestCpu: '1',
+                                        resourceLimitCpu: '2'
+                                    )
+                                ],
+                                volumes: [
+                                    secretVolume(
+                                        mountPath: '/kaniko/.docker',
+                                        secretName: 'nexus-docker-config'
+                                    )
+                                ],
+                                workspaceVolume: emptyDirWorkspaceVolume()
+                            ) {
+                                node(POD_LABEL) {
+                                    try {
+                                        echo "──── [${svc}] Starting build in dedicated pod ────"
+                                        echo "[${svc}] Dockerfile : ${svcPath}/Dockerfile"
+                                        echo "[${svc}] Context    : ${svcPath}"
+                                        echo "[${svc}] Destination: ${imageRef}"
+                                        
+                                        checkout scm
+                                        
+                                        if (!fileExists(svcPath)) {
+                                            error "Service directory ${svcPath} does not exist."
+                                        }
+                                        if (!fileExists("${svcPath}/Dockerfile")) {
+                                            error "Dockerfile not found at ${svcPath}/Dockerfile."
+                                        }
+                                        
+                                        container('kaniko') {
+                                            retry(3) {
+                                                sh """
+                                                    /kaniko/executor \
+                                                      --context="\$(pwd)/${svcPath}" \
+                                                      --dockerfile="\$(pwd)/${svcPath}/Dockerfile" \
+                                                      --destination="${imageRef}" \
+                                                      --insecure \
+                                                      --insecure-pull \
+                                                      --skip-tls-verify \
+                                                      --cache=true \
+                                                      --cache-repo="${cacheRepo}" \
+                                                      --cache-ttl=168h
+                                                """
                                             }
                                         }
+                                        
+                                        echo "✓ ${svc} completed"
+                                    } catch (Exception e) {
+                                        echo "✗ ${svc} failed: ${e.message}"
+                                        echo "Continuing..."
+                                        failedServices << svc
                                     }
-                                } catch (Exception e) {
-                                    echo "✘ [${svc}] Failed to schedule build pod: ${e.message}"
-                                    failedServices << svc
                                 }
                             }
+                        } catch (Exception e) {
+                            echo "✗ Failed to schedule build pod for ${svc}: ${e.message}"
+                            echo "Continuing..."
+                            failedServices << svc
                         }
-                        
-                        parallel batchSteps
-                        echo "──── Completed Batch ${batchNum} ────"
                     }
                     
+                    echo "=================================================="
                     if (!failedServices.isEmpty()) {
+                        echo "FAILED SERVICES"
+                        failedServices.each { echo it }
+                        echo "=================================================="
                         error "The following services failed to build: ${failedServices.join(', ')}"
+                    } else {
+                        echo "ALL SERVICES COMPLETED SUCCESSFULLY"
+                        echo "=================================================="
                     }
                 }
             }
