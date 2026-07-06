@@ -6,7 +6,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install production dependencies only
-RUN npm install --only=production
+RUN npm ci --only=production && npm cache clean --force
 
 # Copy application source code only.
 # .env.example is NOT copied — configuration must be injected at runtime
