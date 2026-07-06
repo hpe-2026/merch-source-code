@@ -522,13 +522,15 @@ pipeline {
                             container('kaniko') {
                                 sh """
                                     /kaniko/executor \
-                                      --context=\$(pwd)/${svcPath} \
-                                      --dockerfile=\$(pwd)/${svcPath}/Dockerfile \
-                                      --destination=${imageRef} \
+                                      --context="\$(pwd)/${svcPath}" \
+                                      --dockerfile="\$(pwd)/${svcPath}/Dockerfile" \
+                                      --destination="${imageRef}" \
                                       --insecure \
+                                      --insecure-pull \
                                       --skip-tls-verify \
                                       --cache=true \
                                       --cache-ttl=168h
+
                                 """
                             }
                             echo "✔ Pushed ${imageRef}"
