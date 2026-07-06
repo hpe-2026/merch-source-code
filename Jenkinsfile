@@ -33,30 +33,33 @@
 //
 //  9. Added .trim() to all service name iterations to prevent whitespace path bugs.
 //
-// ── KANIKO CONTAINER REUSE — SAFETY NOTES ────────────────────────────────────
-// All 6 image builds run in the same kaniko container sequentially.
-// This is safe because:
+// ── KANIKO CONTAINER REUSE — WHY resetKanikoContainerAfterBuild() EXISTS ───────
+// All 6 image builds run in the same kaniko container sequentially (Kubernetes
+// cannot replace a single container inside a running pod — only the whole pod).
 //
-//   a) 5 of 6 services share FROM node:18-alpine — identical base image,
-//      so there is zero filesystem contamination between those builds.
+// Kaniko is designed as a single-shot executor. After each run it leaves the
+// container in a state where the NEXT Jenkins `sh` step cannot start:
 //
-//   b) python-service uses FROM python:3.11-slim. Even after building a
-//      node:18-alpine service, Kaniko extracts python:3.11-slim fresh from
-//      the registry and takes a snapshot baseline from THAT state. Our
-//      Dockerfile's layer deltas are computed against the new baseline only.
-//      Leftover node:alpine files that python:3.11-slim does not overwrite
-//      sit in the "baseline" snapshot and are never captured in any layer.
-//      The final pushed image = registry base layers + our layer deltas = clean.
+//   1. --cleanup removes unpacked base-image files, including /bin/sh symlinks.
+//      Jenkins execs via `kubectl exec … /bin/sh -c …` (durable-task plugin).
+//      Missing /bin/sh → "Process exited immediately after creation" BEFORE
+//      any pipeline script line is printed.
 //
-//   c) /busybox/sh in the kaniko debug image is a static binary located at
-//      /busybox/ — a path that neither node:18-alpine nor python:3.11-slim
-//      has. It survives every base-image extraction intact. Jenkins can
-//      therefore execute sh steps in the kaniko container after each build.
+//   2. Kaniko deletes /workspace at exit. Jenkins durable-task writes its
+//      wrapper script to the container working directory; without /workspace
+//      (and without workingDir set — see kaniko container spec) the next exec
+//      fails the same way.
 //
-//   d) The previous "Process exited immediately after creation" error was
-//      caused exclusively by the --cleanup flag (which deleted /bin/sh and
-//      /busybox/sh). Without --cleanup, the kaniko container is stable across
-//      multiple sequential builds.
+//   3. Kaniko leaves numbered snapshot dirs (/kaniko/0, /kaniko/1243507711, …)
+//      that corrupt the next executor invocation (GoogleContainerTools/kaniko#2793).
+//
+// Restoring /bin/sh symlinks alone is necessary but NOT sufficient. Each build
+// MUST also recreate /workspace and purge /kaniko/[0-9]* snapshot dirs. The
+// reset MUST run as a separate `sh` step (not chained with && on the executor
+// line) to avoid Jenkins durable-task shell-quoting bugs.
+//
+// Image-build correctness: pushed images remain clean (registry base + our
+// layers). In-container rootfs pollution between builds is reset, not propagated.
 //
 // ── BEHAVIOR ─────────────────────────────────────────────────────────────────
 //   Pull Request builds  → CI only: setup/checkout, detect changes,
@@ -147,6 +150,28 @@ def svcDir(Map allSvcs, String svc) {
     return d
 }
 
+// Reset Kaniko container filesystem state after each executor run so Jenkins can
+// exec `sh` into the same container for the next image build.
+// Call ONLY from inside container('kaniko') { … }.
+// See: https://github.com/GoogleContainerTools/kaniko/issues/2793
+def resetKanikoContainerAfterBuild() {
+    sh(
+        label: 'Reset Kaniko container for next build',
+        script: '''/busybox/sh -c '
+            /busybox/mkdir -p /bin /usr/bin /workspace
+            /busybox/ln -sf /busybox/sh    /bin/sh
+            /busybox/ln -sf /busybox/cat   /bin/cat
+            /busybox/ln -sf /busybox/env   /usr/bin/env
+            /busybox/ln -sf /busybox/rm    /bin/rm
+            /busybox/ln -sf /busybox/mkdir /bin/mkdir
+            for d in /kaniko/[0-9]*; do
+                [ -e "$d" ] && /busybox/rm -rf "$d"
+            done
+            /busybox/rm -f /kaniko/Dockerfile
+        ' '''
+    )
+}
+
 // =============================================================================
 pipeline {
 
@@ -203,10 +228,13 @@ spec:
   # kaniko — all Docker image builds, sequentially, for all microservices.
   # Low request = pod is schedulable on a resource-constrained node.
   # High limit  = kaniko can burst during actual layer extraction + push.
+  # workingDir MUST match devops/jnlp so Jenkins mounts the shared workspace
+  # volume here; without it durable-task cannot write wrapper scripts for exec.
   - name: kaniko
     image: gcr.io/kaniko-project/executor:debug
     command: ["sleep", "99d"]
     tty: true
+    workingDir: /home/jenkins/agent
     resources:
       requests:
         memory: "384Mi"
@@ -666,7 +694,7 @@ spec:
         //   → 0 JNLP connections
         //   → 0 scheduling overhead
         //
-        // See file header for the kaniko container reuse safety analysis.
+        // See file header for kaniko container reuse reset requirements.
         //
         // Builds are STRICTLY SEQUENTIAL to:
         //   (a) Stay within the single-node memory budget (kaniko bursts to
@@ -721,33 +749,27 @@ spec:
                             // it resolves to /home/jenkins/agent/workspace/merch-pipeline_main.
                             container('kaniko') {
                                 retry(3) {
-                                    sh """
-                                        /kaniko/executor \\
-                                          --context="${WORKSPACE}/${svcPath}" \\
-                                          --dockerfile="${WORKSPACE}/${svcPath}/Dockerfile" \\
-                                          --destination="${imageRef}" \\
-                                          --insecure \\
-                                          --insecure-pull \\
-                                          --skip-tls-verify \\
-                                          --cache=true \\
-                                          --cache-repo="${cacheRepo}" \\
-                                          --cache-ttl=168h \\
-                                          --log-format=text \\
-                                          --verbosity=warn \\
-                                          --cleanup
-                                        
-                                        # Kaniko's --cleanup deletes files extracted from the base image,
-                                        # which brutally removes /bin/sh and breaks Jenkins's ability to run 
-                                        # the NEXT `sh` step in this container.
-                                        # Since the current shell is still in memory, we can use the static 
-                                        # busybox binary to restore the critical symlinks before we exit!
-                                        /busybox/sh -c '
-                                            /busybox/mkdir -p /bin /usr/bin
-                                            /busybox/ln -sf /busybox/sh /bin/sh
-                                            /busybox/ln -sf /busybox/cat /bin/cat
-                                            /busybox/ln -sf /busybox/env /usr/bin/env
-                                        '
-                                    """
+                                    sh(
+                                        label: "Kaniko build ${svc}",
+                                        script: """
+                                            /kaniko/executor \\
+                                              --context="${WORKSPACE}/${svcPath}" \\
+                                              --dockerfile="${WORKSPACE}/${svcPath}/Dockerfile" \\
+                                              --destination="${imageRef}" \\
+                                              --insecure \\
+                                              --insecure-pull \\
+                                              --skip-tls-verify \\
+                                              --cache=true \\
+                                              --cache-repo="${cacheRepo}" \\
+                                              --cache-ttl=168h \\
+                                              --log-format=text \\
+                                              --verbosity=warn \\
+                                              --cleanup
+                                        """
+                                    )
+                                    // Separate sh step — NOT chained with && on the executor line.
+                                    // Restores /bin/sh, recreates /workspace, purges /kaniko/[0-9]*.
+                                    resetKanikoContainerAfterBuild()
                                 }
                             }
 
