@@ -166,6 +166,9 @@ pipeline {
                         echo "──── Installing system tools ────"
                         apk add --no-cache git python3 py3-pip curl bash openssl
 
+                        echo "──── Fixing git safe.directory (jnlp checks out as root, devops runs as uid 1000) ────"
+                        git config --global --add safe.directory "*"
+
                         echo "──── Installing yq v4 (YAML processor) ────"
                         YQ_VERSION="v4.40.5"
                         curl -fsSL \
