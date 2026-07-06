@@ -509,7 +509,10 @@ pipeline {
                             // Build the authenticated URL in Groovy (safe for tokens
                             // that contain special shell characters).
                             def repoHost  = env.CONFIG_REPO_URL.replaceFirst('https://', '')
-                            def authedUrl = "https://\${GIT_USER}:\${GIT_TOKEN}@${repoHost}"
+                            // GIT_USER and GIT_TOKEN come from withCredentials — they are
+                            // available as Groovy variables (NOT shell variables at this point).
+                            // Use Groovy string interpolation (${}) — no backslash-escape needed.
+                            def authedUrl = "https://${GIT_USER}:${GIT_TOKEN}@${repoHost}"
 
                             // Clone the config repo (dev branch, shallow clone for speed).
                             sh """
@@ -551,10 +554,11 @@ pipeline {
                                     git config user.email "jenkins-ci@merch.local"
                                     git config user.name  "jenkins-ci"
                                     git add -A
-                                    git diff --cached --quiet && {
-                                        echo "No manifest changes — skipping commit."
-                                    } || git commit -m \
-                                        "ci: bump image tag(s) → ${env.IMAGE_TAG} for [${env.SERVICES_TO_BUILD}] (build #${env.BUILD_NUMBER})"
+                                    if git diff --cached --quiet; then
+                                        echo "No manifest changes — nothing to commit."
+                                    else
+                                        git commit -m "ci: bump image tag(s) to ${env.IMAGE_TAG} for [${env.SERVICES_TO_BUILD}] (build #${env.BUILD_NUMBER})"
+                                    fi
                                     git push origin ${env.CONFIG_REPO_BRANCH}
                                 """
                             }
