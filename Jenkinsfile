@@ -415,7 +415,7 @@ pipeline {
 
                             if (manifestType == 'node') {
                                 container('devops') {
-                                    sh 'npm install --legacy-peer-deps'
+                                    sh 'npm ci --legacy-peer-deps'
                                 }
                             } else if (manifestType == 'python') {
                                 container('devops') {
@@ -436,45 +436,7 @@ pipeline {
         }
 
         // ── Build ─────────────────────────────────────────────────────────────
-        stage('Build') {
-            steps {
-                script {
-                    env.SERVICES_TO_BUILD.split(',').each { svc ->
-                        dir(svcDir(ALL_SERVICES, svc)) {
-                            def buildType = 'none'
-                            container('devops') {
-                                buildType = sh(
-                                    script: '''
-                                        if   [ -f package.json                       ]; then echo "node"
-                                        elif [ -f setup.py ] || [ -f pyproject.toml  ]; then echo "python"
-                                        else                                             echo "none"
-                                        fi
-                                    ''',
-                                    returnStdout: true
-                                ).trim()
-                            }
-
-                            if (buildType == 'node') {
-                                container('devops') {
-                                    sh 'npm run build --if-present'
-                                }
-                            } else if (buildType == 'python') {
-                                container('devops') {
-                                    sh '''
-                                        if [ -d .venv ]; then
-                                            . .venv/bin/activate
-                                        fi
-                                        python3 -m compileall -q .
-                                    '''
-                                }
-                            } else {
-                                echo "No build step defined for ${svc} — skipping."
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // Build stage removed: Kaniko handles building during image creation
 
         // ── Unit Tests ────────────────────────────────────────────────────────
         stage('Unit Tests') {
@@ -596,16 +558,17 @@ pipeline {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
                 script {
-                    def parallelBuilds = [:]
-
                     env.SERVICES_TO_BUILD.split(',').each { svcName ->
                         // Capture loop variables in locals for safe closure binding.
                         def svc      = svcName
                         def svcPath  = svcDir(ALL_SERVICES, svc)
                         // Full image reference that will be used in kustomization.yaml
                         def imageRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:${env.IMAGE_TAG}"
+                        def cacheRepo = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}-cache"
 
-                        parallelBuilds["kaniko-${svc}"] = {
+                        // Run sequentially to prevent Kaniko OOMKilled errors (Issue 2).
+                        // Retry up to 3 times to handle intermittent network failures.
+                        retry(3) {
                             container('kaniko') {
                                 sh """
                                     /kaniko/executor \
@@ -616,16 +579,13 @@ pipeline {
                                       --insecure-pull \
                                       --skip-tls-verify \
                                       --cache=true \
+                                      --cache-repo="${cacheRepo}" \
                                       --cache-ttl=168h
-
                                 """
                             }
-                            echo "✔ Pushed ${imageRef}"
                         }
+                        echo "✔ Pushed ${imageRef}"
                     }
-
-                    // All services build in parallel — wall-clock time ≈ slowest service.
-                    parallel parallelBuilds
                 }
             }
         }

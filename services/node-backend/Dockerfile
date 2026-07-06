@@ -7,8 +7,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies with legacy peer deps flag
-RUN npm install --legacy-peer-deps --ignore-optional --no-audit --no-fund 2>/dev/null || \
-    npm install --force --no-audit --no-fund
+RUN npm ci --legacy-peer-deps --ignore-optional --no-audit --no-fund && npm cache clean --force
 
 # Production stage
 FROM node:18-alpine
