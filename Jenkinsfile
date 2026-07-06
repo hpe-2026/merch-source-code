@@ -554,67 +554,100 @@ pipeline {
         // --skip-tls-verify   → Belt-and-suspenders for the insecure registry
         // --cache=true        → Layer caching — speeds up repeated builds
         // --cache-ttl=168h    → Keep cache for 7 days
+        //
+        // ARCHITECTURE: Each service builds in its own dedicated pod with a fresh
+        // Kaniko container. This prevents filesystem pollution that occurs when
+        // Kaniko extracts base images to the root filesystem. All builds run in
+        // parallel for maximum speed.
         stage('Kaniko: Build & Push Images') {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
                 script {
-                    def failedServices = []
-
+                    def buildSteps = [:]
+                    
                     env.SERVICES_TO_BUILD.split(',').each { svcName ->
-                        // Capture loop variables in locals for safe closure binding.
-                        def svc      = svcName
-                        def svcPath  = svcDir(ALL_SERVICES, svc)
-                        // Full image reference that will be used in kustomization.yaml
+                        // Capture loop variables for closure
+                        def svc = svcName
+                        def svcPath = svcDir(ALL_SERVICES, svc)
                         def imageRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:${env.IMAGE_TAG}"
                         def cacheRepo = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}-cache"
-
-                        try {
-                            echo "──── Building ${svc} ────"
-                            echo "Dockerfile : ${svcPath}/Dockerfile"
-                            echo "Context    : ${svcPath}"
-                            echo "Destination: ${imageRef}"
-
-                            if (!fileExists(svcPath)) {
-                                error "Service directory ${svcPath} does not exist."
-                            }
-                            if (!fileExists("${svcPath}/Dockerfile")) {
-                                error "Dockerfile not found at ${svcPath}/Dockerfile."
-                            }
-
-                            container('kaniko') {
-                                // Retry scoped strictly to the Kaniko executor command  
-                                // 
-                                // CRITICAL FLAGS EXPLAINED:
-                                // --ignore-path: Prevents Kaniko from overwriting these paths
-                                //                during base image extraction. Without these,
-                                //                Kaniko replaces /bin/sh and breaks Jenkins.
-                                retry(3) {
-                                    sh """
-                                        /kaniko/executor \
-                                          --context="\$(pwd)/${svcPath}" \
-                                          --dockerfile="\$(pwd)/${svcPath}/Dockerfile" \
-                                          --destination="${imageRef}" \
-                                          --insecure \
-                                          --insecure-pull \
-                                          --skip-tls-verify \
-                                          --cache=true \
-                                          --cache-repo="${cacheRepo}" \
-                                          --cache-ttl=168h \
-                                          --ignore-path=/busybox \
-                                          --ignore-path=/kaniko
-                                    """
+                        def workspaceDir = env.WORKSPACE  // Capture workspace path
+                        
+                        buildSteps[svc] = {
+                            podTemplate(
+                                cloud: 'kubernetes',
+                                namespace: 'system',
+                                serviceAccount: 'jenkins',
+                                containers: [
+                                    containerTemplate(
+                                        name: 'kaniko',
+                                        image: 'gcr.io/kaniko-project/executor:debug',
+                                        command: 'sleep',
+                                        args: '99d',
+                                        ttyEnabled: true,
+                                        resourceRequestMemory: '1Gi',
+                                        resourceLimitMemory: '2Gi',
+                                        resourceRequestCpu: '1',
+                                        resourceLimitCpu: '2'
+                                    )
+                                ],
+                                volumes: [
+                                    secretVolume(
+                                        mountPath: '/kaniko/.docker',
+                                        secretName: 'nexus-docker-config'
+                                    )
+                                ],
+                                workspaceVolume: emptyDirWorkspaceVolume()
+                            ) {
+                                node(POD_LABEL) {
+                                    try {
+                                        echo "──── Building ${svc} in dedicated pod ────"
+                                        echo "Dockerfile : ${svcPath}/Dockerfile"
+                                        echo "Context    : ${svcPath}"
+                                        echo "Destination: ${imageRef}"
+                                        
+                                        // Checkout code in this fresh pod
+                                        checkout scm
+                                        
+                                        // Verify paths exist
+                                        if (!fileExists(svcPath)) {
+                                            error "Service directory ${svcPath} does not exist."
+                                        }
+                                        if (!fileExists("${svcPath}/Dockerfile")) {
+                                            error "Dockerfile not found at ${svcPath}/Dockerfile."
+                                        }
+                                        
+                                        container('kaniko') {
+                                            retry(3) {
+                                                sh """
+                                                    /kaniko/executor \
+                                                      --context="\$(pwd)/${svcPath}" \
+                                                      --dockerfile="\$(pwd)/${svcPath}/Dockerfile" \
+                                                      --destination="${imageRef}" \
+                                                      --insecure \
+                                                      --insecure-pull \
+                                                      --skip-tls-verify \
+                                                      --cache=true \
+                                                      --cache-repo="${cacheRepo}" \
+                                                      --cache-ttl=168h
+                                                """
+                                            }
+                                        }
+                                        
+                                        echo "✔ Pushed ${imageRef}"
+                                    } catch (Exception e) {
+                                        echo "✘ Failed to build ${svc}: ${e.message}"
+                                        throw e  // Re-throw to mark this parallel branch as failed
+                                    }
                                 }
                             }
-                            echo "✔ Pushed ${imageRef}"
-                        } catch (Exception e) {
-                            echo "✘ Failed to build ${svc}: ${e.message}"
-                            failedServices << svc
                         }
                     }
-
-                    if (!failedServices.isEmpty()) {
-                        error "The following services failed to build: ${failedServices.join(', ')}"
-                    }
+                    
+                    // Execute all builds in parallel
+                    echo "──── Starting parallel builds for ${buildSteps.size()} services ────"
+                    parallel buildSteps
+                    echo "──── All image builds completed successfully ────"
                 }
             }
         }
