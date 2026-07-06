@@ -594,19 +594,7 @@ pipeline {
                                           --skip-tls-verify \
                                           --cache=true \
                                           --cache-repo="${cacheRepo}" \
-                                          --cache-ttl=168h \
-                                          --cleanup
-                                          
-                                        # Kaniko's --cleanup wipes the extracted base image from the root filesystem.
-                                        # This destructively deletes the /bin and /sbin directories, which breaks
-                                        # Jenkins's ability to launch the next 'sh' step. Since this current shell
-                                        # is already in memory, we use the static /busybox binary to restore the
-                                        # default symlinks so the Kaniko container remains valid for the next loop.
-                                        /busybox/mkdir -p /usr
-                                        /busybox/ln -sfn /busybox /bin
-                                        /busybox/ln -sfn /busybox /sbin
-                                        /busybox/ln -sfn /busybox /usr/bin
-                                        /busybox/ln -sfn /busybox /usr/sbin
+                                          --cache-ttl=168h
                                     """
                                 }
                             }
