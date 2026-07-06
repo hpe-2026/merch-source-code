@@ -9,14 +9,14 @@ db = db.getSiblingDB('admin');
 print('Adding shards to cluster...');
 
 try {
-  sh.addShard('shard1/mongo-shard1-0.mongo-shard1:27018');
+  sh.addShard('shard1/mongo-shard1:27018');
   print('✓ Shard 1 (South/West India) added');
 } catch (e) {
   print('✓ Shard 1 already exists');
 }
 
 try {
-  sh.addShard('shard2/mongo-shard2-0.mongo-shard2:27019');
+  sh.addShard('shard2/mongo-shard2:27019');
   print('✓ Shard 2 (North/East India) added');
 } catch (e) {
   print('✓ Shard 2 already exists');
@@ -25,13 +25,11 @@ try {
 // Switch to nitte_merch database
 db = db.getSiblingDB('nitte_merch');
 
-// Create application users.
-// Passwords are read from environment variables passed to the mongosh process.
-// Never hardcode credentials in source code.
-// Pass via: mongosh --eval 'var APP_WRITER_PASS=...; var APP_READER_PASS=...' sharding-init.js
-// Or set them in a Kubernetes Secret and mount as environment variables.
-const writerPass = typeof APP_WRITER_PASS !== 'undefined' ? APP_WRITER_PASS : (() => { throw new Error('APP_WRITER_PASS must be set'); })();
-const readerPass = typeof APP_READER_PASS !== 'undefined' ? APP_READER_PASS : (() => { throw new Error('APP_READER_PASS must be set'); })();
+// Create application users (optional in dev — no auth enforcement without keyFile).
+// In production (Kubernetes), auth is enforced via keyFile and these users are required.
+// For local dev, these are created for compatibility but mongos runs without auth.
+const writerPass = typeof APP_WRITER_PASS !== 'undefined' ? APP_WRITER_PASS : 'app_writer_dev';
+const readerPass = typeof APP_READER_PASS !== 'undefined' ? APP_READER_PASS : 'app_reader_dev';
 
 print('Creating application users...');
 try {
