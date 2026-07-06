@@ -159,6 +159,28 @@ pipeline {
         // This adds ~45 s per build but avoids maintaining a custom image.
         // Once you have a Nexus registry working, replace this with a
         // pre-built devops image: 192.168.56.10:30082/merch-docker/devops-tools:1.0
+        //
+        // ── WHY safe.directory IS SET HERE ────────────────────────────────────
+        // The Kubernetes plugin mounts a single shared workspace volume into ALL
+        // pod containers. The jnlp container (uid 1000, "jenkins") is the first
+        // container to start and it creates the workspace directory tree, meaning
+        // the workspace root is owned by uid 1000.
+        //
+        // Every subsequent git operation in this pipeline runs inside the devops
+        // container (node:20-alpine), which runs as uid 0 (root). Git 2.35.2+
+        // introduced CVE-2022-24765 protection: if the directory owner's uid does
+        // not match the running process's uid, Git aborts with:
+        //   "fatal: detected dubious ownership in repository"
+        //
+        // Setting safe.directory to the Jenkins workspace path (${WORKSPACE}) in
+        // the first stage, before any git command runs, tells Git that this
+        // specific path is intentionally operated on by a different uid — which
+        // is the documented, upstream-sanctioned mechanism for exactly this
+        // container/CI scenario. It is scoped to the workspace path only and does
+        // NOT use the '*' wildcard, which would be the unsafe alternative.
+        //
+        // Root-level /root/.gitconfig is used because devops runs as root and
+        // --global resolves to /root/.gitconfig inside that container.
         stage('Setup Tools') {
             steps {
                 container('devops') {
@@ -182,15 +204,31 @@ pipeline {
                         python3 --version
                         curl --version | head -1
                     '''
+
+                    // ── FIX: Register workspace as a safe.directory ───────────
+                    // Must run AFTER git is installed (above) and BEFORE any
+                    // git command runs (Checkout stage and everything after).
+                    // ${WORKSPACE} is the Jenkins-injected env var pointing to
+                    // the shared volume mount path, e.g.:
+                    //   /home/jenkins/agent/workspace/merch-source-code_main
+                    // Using --global scopes this to the devops container's root
+                    // user only. The jnlp container is unaffected.
+                    sh 'git config --global --add safe.directory "${WORKSPACE}"'
+
+                    // Also register the config repo subdirectory that the
+                    // Update Config Repository stage will clone into, so the
+                    // git operations inside that cloned repo also succeed.
+                    sh 'git config --global --add safe.directory "${WORKSPACE}/${CONFIG_REPO_DIR}"'
                 }
             }
         }
 
         // ── Checkout ──────────────────────────────────────────────────────────
-        // Executed inside container('devops') as root (UID 0).
-        // Since Setup Tools runs first and installs git, checkout scm executes
-        // cleanly using the container's git context. All checked-out workspace
-        // files are owned by root, aligning perfectly with subsequent stages.
+        // Executed inside container('devops') as root (uid 0).
+        // git is installed in Setup Tools so checkout scm works cleanly.
+        // The workspace root is owned by jnlp (uid 1000) but Git now trusts
+        // it because safe.directory was set in Setup Tools above.
+        // All checked-out workspace files are written by root (uid 0).
         stage('Checkout') {
             steps {
                 container('devops') {
@@ -220,8 +258,8 @@ pipeline {
         }
 
         // ── Detect Changed Services ───────────────────────────────────────────
-        // git fetch + git diff run in container('devops') (uid 0) on a workspace
-        // checked out by devops (uid 0). No safe.directory bypass is required.
+        // git fetch + git diff run in container('devops') (uid 0).
+        // safe.directory registered in Setup Tools allows these to run cleanly.
         stage('Detect Changed Services') {
             steps {
                 container('devops') {
@@ -518,6 +556,8 @@ pipeline {
                             def authedUrl = "https://${GIT_USER}:${GIT_TOKEN}@${repoHost}"
 
                             // Clone the config repo (dev branch, shallow clone for speed).
+                            // The cloned repo lands at ${WORKSPACE}/${CONFIG_REPO_DIR}, which
+                            // was already registered as a safe.directory in Setup Tools.
                             sh """
                                 rm -rf ${env.CONFIG_REPO_DIR}
                                 git clone --depth=1 --branch ${env.CONFIG_REPO_BRANCH} \
