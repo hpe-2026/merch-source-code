@@ -187,7 +187,7 @@ pipeline {
                     sh '''
                         set -e
                         echo "──── Installing system tools ────"
-                        apk add --no-cache git python3 py3-pip python3-venv curl bash openssl
+                        apk add --no-cache git python3 py3-pip curl bash openssl
 
                         echo "──── Installing yq v4 (YAML processor) ────"
                         YQ_VERSION="v4.40.5"
