@@ -234,6 +234,10 @@ services:
         mongosh --host mongos --port 27017 \
           --eval "var APP_WRITER_PASS='app_writer_dev'; var APP_READER_PASS='app_reader_dev';" \
           /scripts/sharding-init.js
+
+        echo "── Seeding product catalog ──"
+        mongosh --host mongos --port 27017 /scripts/seed-products.js
+
         echo "── MongoDB Sharded Cluster Fully Initialized ──"
 
   # ---------------------------------------------------------------------------
@@ -495,20 +499,32 @@ services:
   minio-init:
     image: minio/mc:RELEASE.2024-03-20T21-07-29Z
     container_name: nitte-minio-init
-    restart: no    # Run once only — quotes removed; bare 'no' is correct YAML
+    restart: no
     depends_on:
       minio:
         condition: service_healthy
+    volumes:
+      - ./product-images:/product-images:ro
     networks:
       - nitte-net
-    entrypoint: |
-      /bin/sh -c "
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
         mc alias set local http://minio:9000 minioadmin '${MINIO_ROOT_PASSWORD:-change-this-minio-secret}'
         mc mb --ignore-existing local/nitte-users
         mc mb --ignore-existing local/nitte-products
         mc anonymous set download local/nitte-products
-        echo 'MinIO buckets initialized.'
-      "
+        echo 'Uploading product images to nitte-products bucket...'
+        mc cp /product-images/nitte-cap.png local/nitte-products/nitte-cap.png
+        mc cp /product-images/nitte-hoodie.png local/nitte-products/nitte-hoodie.png
+        mc cp /product-images/nitte-premium_hoodie.png local/nitte-products/nitte-premium_hoodie.png
+        mc cp /product-images/nitte-tshirt.png local/nitte-products/nitte-tshirt.png
+        mc cp /product-images/nitte-mug.png local/nitte-products/nitte-mug.png
+        mc cp /product-images/nitte-waterbottle.png local/nitte-products/nitte-waterbottle.png
+        mc cp /product-images/nitte-notebook.png local/nitte-products/nitte-notebook.png
+        mc cp /product-images/nitte-laptopStickers.png local/nitte-products/nitte-laptopStickers.png
+        echo 'MinIO buckets initialized and product images uploaded.'
 
   # ---------------------------------------------------------------------------
   # Jaeger — distributed tracing backend.
