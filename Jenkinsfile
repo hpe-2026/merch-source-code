@@ -558,6 +558,8 @@ pipeline {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
                 script {
+                    def failedServices = []
+
                     env.SERVICES_TO_BUILD.split(',').each { svcName ->
                         // Capture loop variables in locals for safe closure binding.
                         def svc      = svcName
@@ -566,25 +568,46 @@ pipeline {
                         def imageRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:${env.IMAGE_TAG}"
                         def cacheRepo = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}-cache"
 
-                        // Run sequentially to prevent Kaniko OOMKilled errors (Issue 2).
-                        // Retry up to 3 times to handle intermittent network failures.
-                        retry(3) {
-                            container('kaniko') {
-                                sh """
-                                    /kaniko/executor \
-                                      --context="\$(pwd)/${svcPath}" \
-                                      --dockerfile="\$(pwd)/${svcPath}/Dockerfile" \
-                                      --destination="${imageRef}" \
-                                      --insecure \
-                                      --insecure-pull \
-                                      --skip-tls-verify \
-                                      --cache=true \
-                                      --cache-repo="${cacheRepo}" \
-                                      --cache-ttl=168h
-                                """
+                        try {
+                            echo "──── Building ${svc} ────"
+                            echo "Dockerfile : ${svcPath}/Dockerfile"
+                            echo "Context    : ${svcPath}"
+                            echo "Destination: ${imageRef}"
+
+                            if (!fileExists(svcPath)) {
+                                error "Service directory ${svcPath} does not exist."
                             }
+                            if (!fileExists("${svcPath}/Dockerfile")) {
+                                error "Dockerfile not found at ${svcPath}/Dockerfile."
+                            }
+
+                            container('kaniko') {
+                                // Retry scoped strictly to the Kaniko executor command
+                                retry(3) {
+                                    sh """
+                                        /kaniko/executor \
+                                          --context="\$(pwd)/${svcPath}" \
+                                          --dockerfile="\$(pwd)/${svcPath}/Dockerfile" \
+                                          --destination="${imageRef}" \
+                                          --insecure \
+                                          --insecure-pull \
+                                          --skip-tls-verify \
+                                          --cache=true \
+                                          --cache-repo="${cacheRepo}" \
+                                          --cache-ttl=168h \
+                                          --cleanup
+                                    """
+                                }
+                            }
+                            echo "✔ Pushed ${imageRef}"
+                        } catch (Exception e) {
+                            echo "✘ Failed to build ${svc}: ${e.message}"
+                            failedServices << svc
                         }
-                        echo "✔ Pushed ${imageRef}"
+                    }
+
+                    if (!failedServices.isEmpty()) {
+                        error "The following services failed to build: ${failedServices.join(', ')}"
                     }
                 }
             }
