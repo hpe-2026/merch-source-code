@@ -563,17 +563,15 @@ pipeline {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
                 script {
-                    def buildSteps = [:]
+                    def failedServices = []
                     
                     env.SERVICES_TO_BUILD.split(',').each { svcName ->
-                        // Capture loop variables for closure
                         def svc = svcName
                         def svcPath = svcDir(ALL_SERVICES, svc)
                         def imageRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:${env.IMAGE_TAG}"
                         def cacheRepo = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}-cache"
-                        def workspaceDir = env.WORKSPACE  // Capture workspace path
                         
-                        buildSteps[svc] = {
+                        try {
                             podTemplate(
                                 cloud: 'kubernetes',
                                 namespace: 'system',
@@ -637,17 +635,19 @@ pipeline {
                                         echo "✔ Pushed ${imageRef}"
                                     } catch (Exception e) {
                                         echo "✘ Failed to build ${svc}: ${e.message}"
-                                        throw e  // Re-throw to mark this parallel branch as failed
+                                        failedServices << svc
                                     }
                                 }
                             }
+                        } catch (Exception e) {
+                            echo "✘ Failed to schedule pod for ${svc}: ${e.message}"
+                            failedServices << svc
                         }
                     }
                     
-                    // Execute all builds in parallel
-                    echo "──── Starting parallel builds for ${buildSteps.size()} services ────"
-                    parallel buildSteps
-                    echo "──── All image builds completed successfully ────"
+                    if (!failedServices.isEmpty()) {
+                        error "The following services failed to build: ${failedServices.join(', ')}"
+                    }
                 }
             }
         }
