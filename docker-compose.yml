@@ -245,6 +245,7 @@ services:
     # Add it back once you have exported a realm JSON.
     command: >
       start-dev
+      --import-realm
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_password}
@@ -271,10 +272,8 @@ services:
       # with MinIO (which owns host port 9000). Healthcheck hits it from inside.
     volumes:
       - keycloak-data:/opt/keycloak/data
-      # Realm JSON auto-import — uncomment BOTH lines below once
-      # keycloak/nitte-realm.json exists (see REALM SETUP above).
-      # Also add --import-realm to the command above when uncommenting.
-      #- ./keycloak/nitte-realm.json:/opt/keycloak/data/import/nitte-realm.json:ro
+      - ./keycloak/nitte-realm.json:/opt/keycloak/data/import/nitte-realm.json:ro
+      - ./keycloak/themes/nitte:/opt/keycloak/themes/nitte:ro
     networks:
       - nitte-net
     healthcheck:
