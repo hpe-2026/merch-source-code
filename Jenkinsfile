@@ -594,7 +594,9 @@ pipeline {
                                           --skip-tls-verify \
                                           --cache=true \
                                           --cache-repo="${cacheRepo}" \
-                                          --cache-ttl=168h
+                                          --cache-ttl=168h \
+                                          --snapshotMode=redo \
+                                          --use-new-run
                                     """
                                 }
                             }
