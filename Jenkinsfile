@@ -189,43 +189,48 @@ pipeline {
         }
 
         // ── Checkout ──────────────────────────────────────────────────────────
+        // IMPORTANT: Do NOT wrap in container('devops') here.
+        // checkout scm always runs in jnlp (JENKINS-30600), and git rev-parse
+        // must run in the SAME user context (jnlp/root) as the checkout —
+        // otherwise git 2.35.2+ rejects the workspace as "dubious ownership".
         stage('Checkout') {
             steps {
-                container('devops') {
-                    checkout scm
-                    script {
-                        env.GIT_SHORT_SHA = sh(
-                            script: 'git rev-parse --short HEAD',
-                            returnStdout: true
-                        ).trim()
-                        // Image tag format: <build-number>-<short-sha>
-                        // e.g.  42-a1b2c3d
-                        env.IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_SHORT_SHA}"
-                        // IS_PR  = true  when triggered by a Pull Request
-                        // IS_MAIN = true when running on the main branch (post-merge)
-                        env.IS_PR   = (env.CHANGE_ID   != null)   ? 'true' : 'false'
-                        env.IS_MAIN = (env.BRANCH_NAME == 'main') ? 'true' : 'false'
+                checkout scm
+                script {
+                    env.GIT_SHORT_SHA = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                    // Image tag format: <build-number>-<short-sha>
+                    // e.g.  42-a1b2c3d
+                    env.IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_SHORT_SHA}"
+                    // IS_PR  = true  when triggered by a Pull Request
+                    // IS_MAIN = true when running on the main branch (post-merge)
+                    env.IS_PR   = (env.CHANGE_ID   != null)   ? 'true' : 'false'
+                    env.IS_MAIN = (env.BRANCH_NAME == 'main') ? 'true' : 'false'
 
-                        echo "─── Build context ───────────────────────────────"
-                        echo "  Branch    : ${env.BRANCH_NAME ?: env.CHANGE_BRANCH}"
-                        echo "  PR build  : ${env.IS_PR}"
-                        echo "  Main build: ${env.IS_MAIN}"
-                        echo "  Image tag : ${env.IMAGE_TAG}"
-                        echo "─────────────────────────────────────────────────"
-                    }
+                    echo "─── Build context ───────────────────────────────"
+                    echo "  Branch    : ${env.BRANCH_NAME ?: env.CHANGE_BRANCH}"
+                    echo "  PR build  : ${env.IS_PR}"
+                    echo "  Main build: ${env.IS_MAIN}"
+                    echo "  Image tag : ${env.IMAGE_TAG}"
+                    echo "─────────────────────────────────────────────────"
                 }
             }
         }
 
         // ── Detect Changed Services ───────────────────────────────────────────
-        // On a PR: compare against the merge target branch.
-        // On main: compare HEAD vs HEAD~1.
-        // If no service-specific changes are detected → build ALL services
-        // (covers first build, Jenkinsfile-only changes, root-level changes).
+        // git fetch + git diff run in container('devops') (uid 1000) on a workspace
+        // checked out by jnlp (uid 0). The safe.directory="*" set in Setup Tools
+        // persists in /home/node/.gitconfig for the lifetime of this pod.
         stage('Detect Changed Services') {
             steps {
                 container('devops') {
                     script {
+                        // Belt-and-suspenders: re-apply safe.directory in case
+                        // HOME differs between sh invocations in devops container.
+                        sh 'git config --global --add safe.directory "*" 2>/dev/null || true'
+
                         def baseRef
 
                         if (env.IS_PR == 'true') {
