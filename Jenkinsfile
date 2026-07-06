@@ -430,7 +430,11 @@ pipeline {
                                         if [ -d .venv ]; then
                                             . .venv/bin/activate
                                         fi
-                                        python3 -m pytest --junitxml=test-results.xml 2>/dev/null || echo "No pytest found — skipping."
+                                        python3 -m pytest \
+                                            --tb=short \
+                                            -p no:warnings \
+                                            --junitxml=test-results.xml \
+                                            2>/dev/null || echo "No pytest found — skipping."
                                     '''
                                 }
                             } else {
