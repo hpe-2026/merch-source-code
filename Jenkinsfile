@@ -594,8 +594,7 @@ pipeline {
                                           --skip-tls-verify \
                                           --cache=true \
                                           --cache-repo="${cacheRepo}" \
-                                          --cache-ttl=168h \
-                                          --cleanup
+                                          --cache-ttl=168h
                                     """
                                 }
                             }
