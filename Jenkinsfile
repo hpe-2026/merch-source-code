@@ -187,7 +187,7 @@ pipeline {
                     sh '''
                         set -e
                         echo "──── Installing system tools ────"
-                        apk add --no-cache git python3 py3-pip curl bash openssl
+                        apk add --no-cache git python3 py3-pip python3-venv curl bash openssl
 
                         echo "──── Installing yq v4 (YAML processor) ────"
                         YQ_VERSION="v4.40.5"
@@ -336,7 +336,12 @@ pipeline {
                                 }
                             } else if (manifestType == 'python') {
                                 container('devops') {
-                                    sh 'pip3 install --user -r requirements.txt'
+                                    sh '''
+                                        python3 -m venv .venv
+                                        . .venv/bin/activate
+                                        pip install --upgrade pip
+                                        pip install -r requirements.txt
+                                    '''
                                 }
                             } else {
                                 echo "No recognized dependency manifest in ${svc} — skipping."
@@ -372,7 +377,12 @@ pipeline {
                                 }
                             } else if (buildType == 'python') {
                                 container('devops') {
-                                    sh 'python3 -m compileall -q .'
+                                    sh '''
+                                        if [ -d .venv ]; then
+                                            . .venv/bin/activate
+                                        fi
+                                        python3 -m compileall -q .
+                                    '''
                                 }
                             } else {
                                 echo "No build step defined for ${svc} — skipping."
@@ -416,7 +426,12 @@ pipeline {
                                 }
                             } else if (testType == 'python') {
                                 container('devops') {
-                                    sh 'python3 -m pytest --junitxml=test-results.xml 2>/dev/null || echo "No pytest found — skipping."'
+                                    sh '''
+                                        if [ -d .venv ]; then
+                                            . .venv/bin/activate
+                                        fi
+                                        python3 -m pytest --junitxml=test-results.xml 2>/dev/null || echo "No pytest found — skipping."
+                                    '''
                                 }
                             } else {
                                 echo "No tests defined for ${svc} — skipping."
