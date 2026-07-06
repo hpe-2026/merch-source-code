@@ -13,11 +13,15 @@ jaeger-client==4.8.0
 six==1.16.0
 behave==1.2.6
 requests==2.31.0
-# OpenTelemetry for distributed tracing (with Jaeger v2.1.0 compatible versions)
-opentelemetry-api==1.20.0
-opentelemetry-sdk==1.20.0
-opentelemetry-exporter-jaeger-thrift==1.20.0
-opentelemetry-instrumentation-fastapi==0.41b0
-opentelemetry-instrumentation-httpx==0.41b0
+# OpenTelemetry - upgraded to 1.24.0 / 0.45b0 to resolve pkg_resources dependency.
+# opentelemetry-instrumentation >= 0.45b0 uses importlib.metadata (Python 3.8+ stdlib)
+# instead of pkg_resources, which is unavailable inside Alpine Linux venvs on Python 3.12.
+# opentelemetry-exporter-jaeger-thrift 1.21.0 is the final release of the Jaeger thrift
+# exporter; its version pin (~=1.21) is compatible-release and satisfies 1.24.0.
+opentelemetry-api==1.24.0
+opentelemetry-sdk==1.24.0
+opentelemetry-exporter-jaeger-thrift==1.21.0
+opentelemetry-instrumentation-fastapi==0.45b0
+opentelemetry-instrumentation-httpx==0.45b0
 pytest-mock==3.12.0
 pytest-asyncio==0.23.3
