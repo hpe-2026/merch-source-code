@@ -8,8 +8,9 @@ RUN npm ci && npm cache clean --force
 
 COPY . .
 
-# VITE_API_URL is baked into the bundle at build time.
-ARG VITE_API_URL=http://localhost:3000
+# VITE_API_URL is resolved at runtime by src/config/api.js.
+# Do NOT set it here — leave it empty so the SPA detects the API from the browser URL.
+ARG VITE_API_URL=
 ENV VITE_API_URL=$VITE_API_URL
 
 RUN npm run build

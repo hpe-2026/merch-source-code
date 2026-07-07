@@ -14,8 +14,8 @@ RUN npm ci && npm cache clean --force
 # Copy source code
 COPY . .
 
-# VITE_API_URL is baked into the bundle at build time.
-ARG VITE_API_URL=http://localhost:3000
+# VITE_API_URL is resolved at runtime by src/config/api.js.
+ARG VITE_API_URL=
 ENV VITE_API_URL=$VITE_API_URL
 
 # Build the app
