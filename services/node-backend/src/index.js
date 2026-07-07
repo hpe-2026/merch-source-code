@@ -270,6 +270,26 @@ const loadOpenAPISpec = () => {
       baseSpec.paths = { ...baseSpec.paths, ...adminUsersPaths.paths || adminUsersPaths };
     }
     
+    // Rewrite external file $refs (e.g. "../schemas/schemas.yaml#/ErrorResponse")
+    // into internal component refs ("#/components/schemas/ErrorResponse"). The
+    // component files are merged into this single document above, so browser-side
+    // tools (Redoc / Swagger UI) can't follow the original file-path refs and fail
+    // with "Invalid JSON pointer". This bundles them into a self-contained spec.
+    const rewriteRefs = (node) => {
+      if (Array.isArray(node)) {
+        node.forEach(rewriteRefs);
+      } else if (node && typeof node === 'object') {
+        for (const [key, value] of Object.entries(node)) {
+          if (key === '$ref' && typeof value === 'string' && value.includes('schemas.yaml#/')) {
+            node[key] = value.replace(/.*schemas\.yaml#\//, '#/components/schemas/');
+          } else {
+            rewriteRefs(value);
+          }
+        }
+      }
+    };
+    rewriteRefs(baseSpec);
+
     logger.info('OpenAPI specification loaded successfully');
     return baseSpec;
   } catch (error) {
