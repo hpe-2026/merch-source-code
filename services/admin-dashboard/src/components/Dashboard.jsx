@@ -216,7 +216,7 @@ export default function Dashboard() {
             Overview
           </p>
           <h1 className="mt-1 text-3xl font-bold text-slate-900 tracking-tight">
-            Admin dashboard
+            NITTE Admin dashboard
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             Real-time view of catalog, fulfillment, and verification activity.
