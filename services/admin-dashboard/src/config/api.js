@@ -37,6 +37,18 @@ export function serviceUrl(sub) {
     const devPorts = { keycloak: 8080, jenkins: 8081, jaeger: 16686, grafana: 3001, prometheus: 9090, minio: 9001 }
     return `http://localhost:${devPorts[sub] || ''}`
   }
+  // In k8s / production — admin tools live on the admin cluster (192.168.56.10)
+  const adminServices = {
+    keycloak: 'http://keycloak.192.168.56.10.nip.io',
+    jenkins: 'http://jenkins.192.168.56.10.nip.io',
+    jaeger: 'http://jaeger.192.168.56.10.nip.io',
+    grafana: 'http://grafana.192.168.56.10.nip.io',
+    prometheus: 'http://prometheus.192.168.56.10.nip.io',
+    minio: 'http://minio.192.168.56.10.nip.io',
+    argocd: 'http://argocd.192.168.56.10.nip.io',
+    nexus: 'http://nexus.192.168.56.10.nip.io'
+  }
+  if (adminServices[sub]) return adminServices[sub]
   const base = hostname.split('.').slice(1).join('.') || hostname
   return `${protocol}//${sub}.${base}${port ? ':' + port : ''}`
 }
