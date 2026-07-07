@@ -14,8 +14,10 @@ function getAPIBase() {
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
       return import.meta.env.DEV ? 'http://localhost:3000' : `${protocol}//${hostname}${port ? ':' + port : ''}`
     }
-    // Served behind a gateway/proxy: use the same origin (relative API calls)
-    return `${protocol}//${hostname}${port ? ':' + port : ''}`
+    // Served behind a gateway/proxy: API at api.<base-domain>
+    const parts = hostname.split('.')
+    parts[0] = 'api'
+    return `${protocol}//${parts.join('.')}${port ? ':' + port : ''}`
   }
 
   return 'http://node-backend:3000'
