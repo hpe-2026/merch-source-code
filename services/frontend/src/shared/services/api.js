@@ -10,7 +10,7 @@ function resolveApiBase() {
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
       return 'http://localhost:3000/api/v1'
     }
-    return `${protocol}//${hostname}${port ? ':' + port : ''}/api/v1`
+    return `${protocol}//${['api', ...hostname.split('.').slice(1)].join('.')}${port ? ':' + port : ''}/api/v1`
   }
   return '/api/v1'
 }

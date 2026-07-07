@@ -17,8 +17,10 @@ function getAPIBase() {
       return 'http://localhost:3000'
     }
 
-    // Default to api port on same host (assumes reverse proxy is configured)
-    return `${protocol}//${hostname}${port ? ':' + port : ''}`
+    // In k8s — API lives at api.<same-base-domain>
+    const parts = hostname.split('.')
+    parts[0] = 'api'
+    return `${protocol}//${parts.join('.')}${port ? ':' + port : ''}`
   }
 
   // Fallback for SSR or server-side
