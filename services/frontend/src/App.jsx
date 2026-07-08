@@ -183,7 +183,7 @@ function App() {
                       <GraduationCap className="w-4 h-4 text-white" strokeWidth={2.25} />
                     </div>
                     <p className="text-sm text-slate-600">
-                      © {new Date().getFullYear()} NMAMIT Alumni Association
+                      © {new Date().getFullYear()} NMAMIT Nitte Alumni Association
                     </p>
                   </div>
                   <p className="text-xs text-slate-400">
