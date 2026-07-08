@@ -51,7 +51,7 @@ function AuthPage({ onAuthSuccess }) {
         <h1 className="login-title">
           {isSignup ? 'Create Account' : 'Welcome Back'}
         </h1>
-        <p className="login-subtitle">NITTE Merchandise Shop</p>
+        <p className="login-subtitle">NMAMIT Merchandise Shop</p>
         
         <form onSubmit={handleSubmit} className="login-form">
           {isSignup && (
