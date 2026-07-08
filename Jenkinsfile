@@ -281,7 +281,7 @@ spec:
         // Push image tag updates to the 'dev' branch so ArgoCD's downstream-dev
         // Application (which watches the 'dev' branch) picks them up and deploys
         // to the dev cluster. Promotion to prod is a separate manual PR: dev → prod.
-        CONFIG_REPO_BRANCH = 'main'
+        CONFIG_REPO_BRANCH = 'dev'
 
         // ── Feature flags ─────────────────────────────────────────────────────
         // Set to 'true' once SonarQube is deployed on the admin cluster.
