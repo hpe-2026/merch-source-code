@@ -112,7 +112,7 @@ export default function AdminLogin({ onLoginSuccess }) {
               <Shield className="w-6 h-6" />
             </div>
             <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-              Sign in to Dashboard
+              ADMIN DASHBOARD
             </h1>
             <p className="mt-1.5 text-sm text-slate-500">
               Platform administration console. Manage users, products, and system settings.
