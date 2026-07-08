@@ -91,7 +91,7 @@ export default function AdminLogin({ onLoginSuccess }) {
           <div className="flex items-center gap-2.5">
             <ShieldCheck className="w-7 h-7 text-white" strokeWidth={2.25} />
             <div className="leading-tight">
-              <p className="text-sm font-extrabold tracking-tight text-slate-900">NITTE Admin</p>
+              <p className="text-sm font-extrabold tracking-tight text-slate-900"> TEST Admin</p>
               <p className="text-[11px] font-medium text-slate-500">Operations Console</p>
             </div>
           </div>
