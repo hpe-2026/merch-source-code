@@ -36,6 +36,7 @@ logger.info('nitte-api-gateway tracer module loaded with spans enabled');
 
 // Import routes
 import authRoutes from './routes/auth.js';
+import flagsRoutes from './routes/flags.js';
 import authSimple from './routes/authSimple.js';
 import adminUsersRoutes from './routes/adminUsers.js';
 import productRoutes from './routes/products.js';
@@ -75,7 +76,7 @@ app.use((req, res, next) => {
 
   next();
 });
-
+app.use('/api/v1/flags', flagsRoutes);
 // OpenTelemetry tracing middleware — creates a parent span for each request
 // and runs the middleware chain within its context so child spans and baggage propagate
 app.use((req, res, next) => {
