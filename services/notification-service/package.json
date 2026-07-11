@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --passWithNoTests"
   },
   "keywords": [
     "notifications",
@@ -17,6 +17,9 @@
   ],
   "author": "NITTE Dev Team",
   "license": "MIT",
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
   "dependencies": {
     "kafkajs": "^2.2.4",
     "nodemailer": "^6.9.4",
