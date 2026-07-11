@@ -319,9 +319,7 @@ spec:
                         env.SERVICES_TO_BUILD.split(',').each { svcName ->
                             def svc = svcName.trim()
                             sh """
-                                cd ${env.CONFIG_REPO_DIR}/admin-cluster/merch
-                                yq eval -i '.images |= map(select(.name == "'${svc}'").newTag = "'${env.IMAGE_TAG}'" // .)' kustomization.yaml
-                                cd ../../downstream-clusters/dev
+                                cd ${env.CONFIG_REPO_DIR}/downstream-clusters/base
                                 yq eval -i '.images |= map(select(.name == "'${svc}'").newTag = "'${env.IMAGE_TAG}'" // .)' kustomization.yaml
                             """
                         }
