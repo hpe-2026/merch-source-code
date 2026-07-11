@@ -103,7 +103,7 @@ spec:
         CONFIG_REPO_URL = 'https://github.com/hpe-2026/hpe-merch-config.git'
         CONFIG_REPO_DIR = 'hpe-merch-config'
         CONFIG_REPO_BRANCH = 'dev'
-        SONAR_ENABLED = 'true'
+        SONAR_ENABLED = 'false'
         GITHUB_CRED_ID = 'github-pat'
         SONAR_TOKEN_ID = 'sonarqube-token'
         NEXUS_CRED_ID = 'nexus-creds'
