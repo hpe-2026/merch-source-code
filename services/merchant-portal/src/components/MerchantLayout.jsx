@@ -6,19 +6,31 @@ import {
   User, 
   LogOut,
   Menu,
-  X
+  X,
+  Truck
 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import axios from 'axios'
 import ThemeToggle from './ThemeToggle'
+import { API_BASE, auth } from '../config/api'
 
 export default function MerchantLayout({ children, user, onLogout }) {
   const location = useLocation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
+  const [showSupplierNav, setShowSupplierNav] = useState(false)
+
+  useEffect(() => {
+    axios.get(`${API_BASE}/api/v1/flags`, auth())
+      .then((res) => setShowSupplierNav(!!res.data?.flags?.showSupplierNav))
+      .catch((err) => console.error('Failed to fetch feature flags', err))
+  }, [])
+
   const navigation = [
     { name: 'Dashboard', href: '/', icon: Store },
     { name: 'Products', href: '/products', icon: Package },
     { name: 'Orders', href: '/orders', icon: ShoppingCart },
+    ...(showSupplierNav ? [{ name: 'Suppliers', href: '/suppliers', icon: Truck }] : []),
     { name: 'Profile', href: '/profile', icon: User },
   ]
 
