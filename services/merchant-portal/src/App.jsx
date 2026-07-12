@@ -7,11 +7,13 @@ import MerchantDashboard from './pages/MerchantDashboard'
 import MerchantProducts from './pages/MerchantProducts'
 import MerchantOrders from './pages/MerchantOrders'
 import MerchantProfile from './pages/MerchantProfile'
-import { API_BASE } from './config/api'
+import MerchantSuppliers from './pages/MerchantSuppliers'
+import { API_BASE, auth } from './config/api'
 
 function App() {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [flags, setFlags] = useState({})
 
   useEffect(() => {
     // Check for existing session
@@ -49,6 +51,13 @@ function App() {
     return () => axios.interceptors.response.eject(id)
   }, [])
 
+  useEffect(() => {
+    if (!user) return
+    axios.get(`${API_BASE}/api/v1/flags`, auth())
+      .then((res) => setFlags(res.data?.flags || {}))
+      .catch((err) => console.error('Failed to fetch feature flags', err))
+  }, [user])
+
   const handleLogin = (userData, token) => {
     localStorage.setItem('merchant_token', token)
     localStorage.setItem('merchant_user', JSON.stringify(userData))
@@ -75,11 +84,12 @@ function App() {
 
   return (
     <Router>
-      <MerchantLayout user={user} onLogout={handleLogout}>
+      <MerchantLayout user={user} onLogout={handleLogout} flags={flags}>
         <Routes>
           <Route path="/" element={<MerchantDashboard user={user} />} />
           <Route path="/products" element={<MerchantProducts user={user} />} />
           <Route path="/orders" element={<MerchantOrders user={user} />} />
+          <Route path="/suppliers" element={flags.showSupplierPages ? <MerchantSuppliers user={user} /> : <Navigate to="/" replace />} />
           <Route path="/profile" element={<MerchantProfile user={user} onLogout={handleLogout} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
