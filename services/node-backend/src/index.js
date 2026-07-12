@@ -76,7 +76,7 @@ app.use((req, res, next) => {
 
   next();
 });
-app.use('/api/v1/flags', flagsRoutes);
+
 // OpenTelemetry tracing middleware — creates a parent span for each request
 // and runs the middleware chain within its context so child spans and baggage propagate
 app.use((req, res, next) => {
@@ -353,6 +353,7 @@ if (openapiSpec) {
 
 // API routes
 console.log('[ROUTES] Mounting authSimple at /api/v1/auth');
+app.use('/api/v1/flags', flagsRoutes);
 app.use('/api/v1/auth', authSimple);  // Use simpler auth with MongoDB
 console.log('[ROUTES] Mounting authRoutes at /api/v1/admin/auth');
 app.use('/api/v1/admin/auth', authRoutes);  // Keycloak is admin-only
