@@ -36,54 +36,8 @@ def resetKanikoContainerAfterBuild() {
 pipeline {
     agent {
         kubernetes {
+            inheritFrom 'devops-agent'
             defaultContainer 'devops'
-            yaml '''
-apiVersion: v1
-kind: Pod
-metadata:
-  labels:
-    app: merch-build
-spec:
-  serviceAccountName: jenkins
-  restartPolicy: Never
-  containers:
-  - name: devops
-    image: node:20-alpine
-    command: ["sleep", "99d"]
-    tty: true
-    workingDir: /home/jenkins/agent
-    resources:
-      requests:
-        memory: "512Mi"
-        cpu: "500m"
-      limits:
-        memory: "1Gi"
-        cpu: "1000m"
-  - name: kaniko
-    image: gcr.io/kaniko-project/executor:debug
-    command: ["sleep", "99d"]
-    tty: true
-    workingDir: /home/jenkins/agent
-    resources:
-      requests:
-        memory: "512Mi"
-        cpu: "500m"
-      limits:
-        memory: "1.5Gi"
-        cpu: "1500m"
-    volumeMounts:
-    - name: nexus-docker-config
-      mountPath: /kaniko/.docker
-  - name: security
-    image: aquasec/trivy:latest
-    command: ["sleep", "99d"]
-    tty: true
-    workingDir: /home/jenkins/agent
-  volumes:
-  - name: nexus-docker-config
-    secret:
-      secretName: nexus-docker-config
-'''
         }
     }
 
@@ -102,7 +56,7 @@ spec:
         NEXUS_REPO_NAME = 'merch-docker'
         CONFIG_REPO_URL = 'https://github.com/hpe-2026/hpe-merch-config.git'
         CONFIG_REPO_DIR = 'hpe-merch-config'
-        CONFIG_REPO_BRANCH = 'dev'
+        CONFIG_REPO_BRANCH = 'main'
         SONAR_ENABLED = 'false'
         GITHUB_CRED_ID = 'github-pat'
         SONAR_TOKEN_ID = 'sonarqube-token'
