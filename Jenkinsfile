@@ -2,8 +2,11 @@
 // Jenkinsfile  —  merch-source-code (IMPROVED - Uses Shared Library)
 // =============================================================================
 
-@Library('merch-shared-lib') _
-
+library identifier: 'merch-shared-lib@main', retriever: modernSCM(
+  [$class: 'GitSCMSource',
+   remote: 'https://github.com/hpe-2026/jenkins-shared-library.git',
+   credentialsId: 'github-pat']
+)
 // Service definitions
 def SERVICES = [
     'frontend'             : 'services/frontend',
