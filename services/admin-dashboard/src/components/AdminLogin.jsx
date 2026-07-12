@@ -49,8 +49,8 @@ export default function AdminLogin({ onLoginSuccess }) {
         setError('Login failed. No token received.')
         return
       }
-      if (!isAdmin && !isMerchant) {
-        setError('Access denied. Admin or Merchant account required.')
+      if (!isAdmin) {
+        setError('Access denied. This portal is for administrators only.')
         return
       }
 
