@@ -1,7 +1,7 @@
 import { ShoppingCart, Home, Package, User, LogOut, CircleDot, GraduationCap } from 'lucide-react'
 import ThemeToggle from './ThemeToggle'
 
-export default function Navbar({ cartCount, currentPage, setCurrentPage, apiStatus, user, onLogout }) {
+export default function Navbar({ cartCount, currentPage, setCurrentPage, apiStatus, user, onLogout, flags = {} }) {
   const navItem = (key, label, Icon) => {
     const active = currentPage === key
     return (
@@ -46,8 +46,8 @@ export default function Navbar({ cartCount, currentPage, setCurrentPage, apiStat
           {/* Center nav */}
           <div className="flex items-center gap-1">
             {navItem('products', 'Shop', Home)}
-            {navItem('cart', 'Cart', ShoppingCart)}
-            {navItem('orders', 'Orders', Package)}
+            {flags.showAddToCart && navItem('cart', 'Cart', ShoppingCart)}
+            {flags.showOrdersPage && navItem('orders', 'Orders', Package)}
           </div>
 
           {/* Right cluster */}

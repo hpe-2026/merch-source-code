@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ShoppingCart, Home, Package, LogOut, GraduationCap } from 'lucide-react'
 import axios from 'axios'
-import { API_BASE } from './config/api'
+import { API_BASE, auth } from './config/api'
 
 // Zustand stores
 import { useAuthStore } from './features/auth/store/authStore'
@@ -24,6 +24,7 @@ function App() {
   const [currentPage, setCurrentPage] = useState('products')
   const [apiStatus, setApiStatus] = useState('checking')
   const [initialized, setInitialized] = useState(false)
+  const [flags, setFlags] = useState({})
 
   // Use Zustand stores instead of local state
   const { user, isAuthenticated, restoreSession, logout: zustandLogout } = useAuthStore()
@@ -71,6 +72,14 @@ function App() {
       }
     }
   }, [isAuthenticated, fetchOrders])
+
+  // Fetch feature flags when authenticated
+  useEffect(() => {
+    if (!isAuthenticated) return
+    axios.get(`${API_BASE}/api/v1/flags`, auth())
+      .then((res) => setFlags(res.data?.flags || {}))
+      .catch((err) => console.error('Failed to fetch feature flags', err))
+  }, [isAuthenticated])
 
   // Check API health with retry logic
   useEffect(() => {
@@ -143,6 +152,7 @@ function App() {
                 apiStatus={apiStatus}
                 user={user}
                 onLogout={handleLogout}
+                flags={flags}
               />
 
               <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
@@ -157,7 +167,7 @@ function App() {
                   <ProductList onAddToCart={addToCart} />
                 )}
 
-                {currentPage === 'cart' && (
+                {currentPage === 'cart' && flags.showAddToCart && (
                   <Cart 
                     cartItems={cartItems}
                     onRemove={removeFromCart}
@@ -166,7 +176,7 @@ function App() {
                   />
                 )}
 
-                {currentPage === 'orders' && (
+                {currentPage === 'orders' && flags.showOrdersPage && (
                   <Orders />
                 )}
 
