@@ -102,7 +102,7 @@ spec:
         NEXUS_REPO_NAME = 'merch-docker'
         CONFIG_REPO_URL = 'https://github.com/hpe-2026/hpe-merch-config.git'
         CONFIG_REPO_DIR = 'hpe-merch-config'
-        CONFIG_REPO_BRANCH = 'dev'
+        CONFIG_REPO_BRANCH = 'main'
         SONAR_ENABLED = 'false'
         GITHUB_CRED_ID = 'github-pat'
         SONAR_TOKEN_ID = 'sonarqube-token'
