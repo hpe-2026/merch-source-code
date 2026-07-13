@@ -229,7 +229,7 @@ spec:
         stage('Semantic Release') {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
-                withCredentials([string(credentialsId: env.GITHUB_CRED_ID, variable: 'GH_TOKEN')]) {
+                withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID, usernameVariable: 'GH_USER', passwordVariable: 'GH_TOKEN')]) {
                     sh 'npx semantic-release'
                     script {
                         if (fileExists('.version')) {
