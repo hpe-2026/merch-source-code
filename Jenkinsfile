@@ -48,7 +48,7 @@ spec:
   restartPolicy: Never
   containers:
   - name: devops
-    image: node:20-alpine
+    image: 192.168.56.10:30082/merch-docker/devops-tools:latest
     command: ["sleep", "99d"]
     tty: true
     workingDir: /home/jenkins/agent
@@ -111,10 +111,7 @@ spec:
         stage('Setup & Checkout') {
             steps {
                 sh '''
-                    apk add --no-cache git python3 py3-pip curl bash openssl jq npm
-                    YQ_VERSION="v4.40.5"
-                    curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" -o /usr/local/bin/yq
-                    chmod +x /usr/local/bin/yq
+                   
                 '''
                 sh 'git config --global --add safe.directory "${WORKSPACE}"'
                 checkout scm
