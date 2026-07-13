@@ -1,0 +1,101 @@
+{
+  "id": "nitte-users",
+  "realm": "nitte-users",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": true,
+  "resetPasswordAllowed": true,
+  "bruteForceProtected": true,
+  "loginTheme": "nitte",
+  "roles": {
+    "realm": [
+      {
+        "name": "platform-admin"
+      },
+      {
+        "name": "alumni-verified"
+      },
+      {
+        "name": "non_alumni"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "nitte-client",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "nitte-client-secret",
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": [
+        "http://frontend.192.168.56.200.nip.io/*",
+        "http://admin.192.168.56.200.nip.io/*"
+      ],
+      "webOrigins": [
+        "http://frontend.192.168.56.200.nip.io",
+        "http://admin.192.168.56.200.nip.io"
+      ]
+    },
+    {
+      "clientId": "nitte-backend",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "nitte-backend-secret",
+      "serviceAccountsEnabled": true
+    }
+  ],
+  "users": [
+    {
+      "username": "admin@nitte.edu",
+      "email": "admin@nitte.edu",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "platform-admin"
+      ]
+    },
+    {
+      "username": "alumni@nitte.edu",
+      "email": "alumni@nitte.edu",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alumni@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "alumni-verified"
+      ]
+    },
+    {
+      "username": "guest_user",
+      "email": "guest_user@alumni-shop.local",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Guest@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "non_alumni"
+      ]
+    }
+  ],
+  "eventsListeners": [
+    "jboss-logging",
+    "nitte-notification-event-listener"
+  ]
+}

@@ -7,9 +7,9 @@
 You can access the Dev Cluster directly over the internet using the jump box's public IP.
 Just visit these URLs in any browser (e.g., your phone):
 
-- **Storefront:** http://frontend.117.250.206.138.nip.io
-- **Admin Dashboard:** http://admin.117.250.206.138.nip.io
-- **Merchant Portal:** http://merchant.117.250.206.138.nip.io
+- **Storefront:** https://frontend.117.250.206.138.nip.io
+- **Admin Dashboard:** https://admin.117.250.206.138.nip.io
+- **Merchant Portal:** https://merchant.117.250.206.138.nip.io
 
 *(Note: Internal services like Keycloak, Grafana, MinIO are not exposed publicly for security. Use Option 3 to access them).*
 
@@ -41,11 +41,11 @@ After that, all `.201` URLs below work directly in your browser.
 
 | Service | Public URL (Option 1) | Internal URL (Options 2 & 3) | Description |
 |---------|-----------------------|------------------------------|-------------|
-| **Storefront** | http://frontend.117.250.206.138.nip.io | http://frontend.192.168.56.201.nip.io | Customer-facing shop |
-| **Admin Dashboard** | http://admin.117.250.206.138.nip.io | http://admin.192.168.56.201.nip.io | Platform admin panel |
-| **Merchant Portal** | http://merchant.117.250.206.138.nip.io | http://merchant.192.168.56.201.nip.io | Merchant product management |
-| **API** | http://api.117.250.206.138.nip.io/api/v1/products | http://api.192.168.56.201.nip.io/api/v1/products | Backend REST API |
-| **API Docs** | http://redoc.117.250.206.138.nip.io | http://redoc.192.168.56.201.nip.io | OpenAPI documentation |
+| **Storefront** | https://frontend.117.250.206.138.nip.io | http://frontend.192.168.56.201.nip.io | Customer-facing shop |
+| **Admin Dashboard** | https://admin.117.250.206.138.nip.io | http://admin.192.168.56.201.nip.io | Platform admin panel |
+| **Merchant Portal** | https://merchant.117.250.206.138.nip.io | http://merchant.192.168.56.201.nip.io | Merchant product management |
+| **API** | https://api.117.250.206.138.nip.io/api/v1/products | http://api.192.168.56.201.nip.io/api/v1/products | Backend REST API |
+| **API Docs** | https://redoc.117.250.206.138.nip.io | http://redoc.192.168.56.201.nip.io | OpenAPI documentation |
 | **Keycloak** | *(Internal only)* | http://keycloak.192.168.56.201.nip.io | Identity management (dev) |
 | **Jaeger** | *(Internal only)* | http://jaeger.192.168.56.201.nip.io | Distributed tracing (dev) |
 | **Grafana** | *(Internal only)* | http://grafana.192.168.56.201.nip.io | Metrics dashboards (dev) |
