@@ -1,0 +1,102 @@
+{
+  "id": "nitte-merchants",
+  "realm": "nitte-merchants",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "bruteForceProtected": true,
+  "loginTheme": "nitte",
+  "roles": {
+    "realm": [
+      {
+        "name": "merchant-admin"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "nitte-client",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "nitte-merchant-client-secret",
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": [
+        "http://merchant.192.168.56.200.nip.io/*",
+        "http://localhost:5175/*"
+      ],
+      "webOrigins": [
+        "http://merchant.192.168.56.200.nip.io"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "merchant-admin@nitte.edu",
+      "email": "merchant-admin@nitte.edu",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "MerchantAdmin@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "merchant-admin"
+      ],
+      "attributes": {
+        "merchant_id": [
+          "nitte-official-store"
+        ]
+      }
+    },
+    {
+      "username": "amazon-merchant@amazon.com",
+      "email": "amazon-merchant@amazon.com",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Amazon@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "merchant-admin"
+      ],
+      "attributes": {
+        "merchant_id": [
+          "amazon-store"
+        ]
+      }
+    },
+    {
+      "username": "flipkart-merchant@flipkart.com",
+      "email": "flipkart-merchant@flipkart.com",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Flipkart@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "merchant-admin"
+      ],
+      "attributes": {
+        "merchant_id": [
+          "flipkart-store"
+        ]
+      }
+    }
+  ],
+  "eventsListeners": [
+    "jboss-logging",
+    "nitte-notification-event-listener"
+  ]
+}
