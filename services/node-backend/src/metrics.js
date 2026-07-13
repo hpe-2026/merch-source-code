@@ -129,6 +129,4 @@ export {
   totalOrdersGauge,
   totalUsersGauge,
   totalProductsGauge,
-  setMetricsDb,
-  refreshDbGauges,
 };
