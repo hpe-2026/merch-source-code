@@ -79,6 +79,40 @@ const activeUsers = new client.Gauge({
   registers: [register],
 });
 
+// ─── Database-backed gauges (survive restarts, show real totals) ───
+const totalOrdersGauge = new client.Gauge({
+  name: 'total_orders_count',
+  help: 'Total number of orders in the database',
+  registers: [register],
+});
+
+const totalUsersGauge = new client.Gauge({
+  name: 'total_users_count',
+  help: 'Total number of registered users in the database',
+  registers: [register],
+});
+
+const totalProductsGauge = new client.Gauge({
+  name: 'total_products_count',
+  help: 'Total number of products in the catalog',
+  registers: [register],
+});
+
+// This function should be called periodically (e.g., every 30s) from index.js
+// after the MongoDB connection is established.
+let _db = null;
+export function setMetricsDb(db) { _db = db; }
+
+export async function refreshDbGauges() {
+  if (!_db) return;
+  try {
+    const nitte = _db.db('nitte_merch');
+    totalOrdersGauge.set(await nitte.collection('orders').countDocuments());
+    totalUsersGauge.set(await nitte.collection('users').countDocuments());
+    totalProductsGauge.set(await nitte.collection('products').countDocuments());
+  } catch (e) { /* ignore — metrics just stay stale until next tick */ }
+}
+
 export {
   register,
   httpRequestDuration,
@@ -92,4 +126,9 @@ export {
   userRegistrationsTotal,
   orderValueTotal,
   activeUsers,
+  totalOrdersGauge,
+  totalUsersGauge,
+  totalProductsGauge,
+  setMetricsDb,
+  refreshDbGauges,
 };

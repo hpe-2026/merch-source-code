@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import config from './config/index.js';
-import { connectDatabase } from './config/database.js';
+import { connectDatabase, getMongoClient } from './config/database.js';
 import logger from './config/logger.js';
 import {
   authMiddleware,
@@ -18,6 +18,8 @@ import {
   httpRequestDuration,
   httpRequestsTotal,
   activeConnections,
+  setMetricsDb,
+  refreshDbGauges,
 } from './metrics.js';
 import tracer, { trace, context, propagation, otelApi, sdk } from './tracing.js';
 import swaggerUi from 'swagger-ui-express';
@@ -398,6 +400,11 @@ const startServer = async () => {
   try {
     // Connect to MongoDB
     await connectDatabase();
+
+    // Wire DB-backed gauge metrics (survive restarts, show real totals)
+    setMetricsDb(getMongoClient());
+    await refreshDbGauges(); // initial populate
+    setInterval(refreshDbGauges, 30000); // refresh every 30s
 
     // Initialize RBAC (handled by Keycloak + middleware directly)
 
