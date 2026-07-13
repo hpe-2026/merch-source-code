@@ -118,7 +118,7 @@ spec:
                 '''
                 sh 'git config --global --add safe.directory "${WORKSPACE}"'
                 checkout scm
-                sh 'npm ci'
+                sh 'npm install --no-audit --no-fund'
                 script {
                     env.GIT_SHORT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     env.IS_PR = (env.CHANGE_ID != null) ? 'true' : 'false'
