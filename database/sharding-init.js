@@ -112,16 +112,22 @@ db = db.getSiblingDB('nitte_merch');
   () => db.users.createIndex({ status: 1 }),
 ].forEach(fn => { try { fn(); } catch (e) { print('index skip: ' + e.message); } });
 
-// Seed admin user (idempotent)
-if (db.users.countDocuments({ email: 'admin@nitte.edu' }) === 0) {
-  db.users.insertOne({
-    email: 'admin@nitte.edu',
-    name: 'Admin User',
-    alumni_id: 'ADMIN-001',
-    department: 'Administration',
-    role: 'admin',
-    user_type: 'admin',
-    status: 'approved',
+// Seed all application users (idempotent — matches Keycloak realm import)
+const seedUsers = [
+  { email: 'admin@nitte.edu', name: 'Admin User', role: 'platform-admin', roles: ['platform-admin'], status: 'approved', user_type: 'admin' },
+  { email: 'alumni@nitte.edu', name: 'Alumni User', role: 'alumni-verified', roles: ['alumni-verified'], status: 'approved', user_type: 'alumni' },
+  { email: 'guest_user', name: 'Guest Demo', role: 'non_alumni', roles: ['non_alumni'], status: 'active', user_type: 'guest' },
+  { email: 'merchant-admin@nitte.edu', name: 'Merchant Admin', role: 'merchant-admin', roles: ['merchant-admin'], status: 'approved', user_type: 'merchant', merchant_id: 'nitte-official-store' },
+  { email: 'amazon-merchant@amazon.com', name: 'Amazon Merchant', role: 'merchant-admin', roles: ['merchant-admin'], status: 'approved', user_type: 'merchant', merchant_id: 'amazon-store' },
+  { email: 'flipkart-merchant@flipkart.com', name: 'Flipkart Merchant', role: 'merchant-admin', roles: ['merchant-admin'], status: 'approved', user_type: 'merchant', merchant_id: 'flipkart-store' },
+  { email: 'internal-admin@nitte.ac.in', name: 'Internal Admin', role: 'admin-internal', roles: ['admin-internal', 'keycloak-admin'], status: 'approved', user_type: 'internal' },
+  { email: 'internal-user@nitte.ac.in', name: 'Internal User', role: 'internal-user', roles: ['internal-user'], status: 'approved', user_type: 'internal' }
+];
+
+let userSeeded = 0;
+seedUsers.forEach(u => {
+  const doc = Object.assign({}, u, {
+    verified: true,
     registration_timestamp: new Date(),
     approved_by: 'system',
     approval_timestamp: new Date(),
@@ -130,10 +136,10 @@ if (db.users.countDocuments({ email: 'admin@nitte.edu' }) === 0) {
       { type: 'approved', timestamp: new Date(), actor: 'system', reason: 'Auto-approved' }
     ]
   });
-  print('✓ Admin user seeded');
-} else {
-  print('✓ Admin user already exists');
-}
+  const r = db.users.updateOne({ email: u.email }, { $setOnInsert: doc }, { upsert: true });
+  if (r.upsertedCount > 0) userSeeded++;
+});
+print('✓ Seeded ' + userSeeded + ' users (' + (seedUsers.length - userSeeded) + ' already existed)');
 
 print('');
 print('========================================');
