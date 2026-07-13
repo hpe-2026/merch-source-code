@@ -76,16 +76,16 @@ pipeline {
         kubernetes {
             inheritFrom 'devops-agent'
             defaultContainer 'devops'
+            yamlMergeStrategy merge()
             yaml '''
 apiVersion: v1
 kind: Pod
 spec:
   containers:
   - name: devops
-    image: node:20-alpine
     command:
     - sh
-    - -c
+    - "-c"
     args:
     - "set -e && apk add --no-cache git bash openssh-client sed && sleep 99d"
 '''
