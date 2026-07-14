@@ -1,6 +1,6 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import axios from 'axios';
-import ProductList from '../components/ProductList';
+import ProductList from './components/ProductList';
 
 jest.mock('axios');
 
