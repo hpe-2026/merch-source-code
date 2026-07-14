@@ -217,7 +217,7 @@ class NotificationConsumer extends kafkaConsumerBase {
   /**
    * Send email via SendGrid API
    */
-  async sendViaSetGrid(to, subject, htmlContent) {
+  async sendViaSendGrid(to, subject, htmlContent) {
     // Implementation for SendGrid API
     // Requires: npm install @sendgrid/mail
     try {
