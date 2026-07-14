@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="6" failures="0" errors="0" time="3.119">
+    <testsuite name="src/App.test.jsx" timestamp="2026-07-14T19:51:37.278Z" hostname="Victus" tests="1" failures="0" errors="0" skipped="0" time="0.003">
+        <testcase classname="src/App.test.jsx" name="App &gt; renders without crashing" time="0.001">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/ProductList.test.jsx" timestamp="2026-07-14T19:51:37.280Z" hostname="Victus" tests="5" failures="0" errors="0" skipped="0" time="0.355">
+        <testcase classname="src/ProductList.test.jsx" name="ProductList &gt; renders loading state initially" time="0.063">
+        </testcase>
+        <testcase classname="src/ProductList.test.jsx" name="ProductList &gt; renders products fetched from API" time="0.174">
+        </testcase>
+        <testcase classname="src/ProductList.test.jsx" name="ProductList &gt; displays error message on fetch failure" time="0.024">
+            <system-err>
+Error: Network Error
+    at /home/prajwal-inna/Documents/merch-source-code/services/frontend/src/ProductList.test.jsx:60:33
+    at file:///home/prajwal-inna/Documents/merch-source-code/services/frontend/node_modules/@vitest/runner/dist/index.js:135:14
+    at file:///home/prajwal-inna/Documents/merch-source-code/services/frontend/node_modules/@vitest/runner/dist/index.js:60:26
+    at runTest (file:///home/prajwal-inna/Documents/merch-source-code/services/frontend/node_modules/@vitest/runner/dist/index.js:781:17)
+    at runSuite (file:///home/prajwal-inna/Documents/merch-source-code/services/frontend/node_modules/@vitest/runner/dist/index.js:909:15)
+    at runSuite (file:///home/prajwal-inna/Documents/merch-source-code/services/frontend/node_modules/@vitest/runner/dist/index.js:909:15)
+    at runFiles (file:///home/prajwal-inna/Documents/merch-source-code/services/frontend/node_modules/@vitest/runner/dist/index.js:958:5)
+    at startTests (file:///home/prajwal-inna/Documents/merch-source-code/services/frontend/node_modules/@vitest/runner/dist/index.js:967:3)
+    at file:///home/prajwal-inna/Documents/merch-source-code/services/frontend/node_modules/vitest/dist/chunks/runtime-runBaseTests.oAvMKtQC.js:116:7
+    at withEnv (file:///home/prajwal-inna/Documents/merch-source-code/services/frontend/node_modules/vitest/dist/chunks/runtime-runBaseTests.oAvMKtQC.js:83:5)
+
+            </system-err>
+        </testcase>
+        <testcase classname="src/ProductList.test.jsx" name="ProductList &gt; filters products by search query" time="0.048">
+        </testcase>
+        <testcase classname="src/ProductList.test.jsx" name="ProductList &gt; calls onAddToCart when add button is clicked" time="0.044">
+        </testcase>
+    </testsuite>
+</testsuites>

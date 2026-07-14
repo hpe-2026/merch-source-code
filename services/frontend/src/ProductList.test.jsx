@@ -1,8 +1,9 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import axios from 'axios';
 import ProductList from './components/ProductList';
+import { vi } from 'vitest';
 
-jest.mock('axios');
+vi.mock('axios');
 
 const mockProducts = [
   {
@@ -26,10 +27,10 @@ const mockProducts = [
 ];
 
 describe('ProductList', () => {
-  const mockOnAddToCart = jest.fn();
+  const mockOnAddToCart = vi.fn();
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('renders loading state initially', () => {
