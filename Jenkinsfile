@@ -206,10 +206,14 @@ spec:
                         dir(svcDir(ALL_SERVICES, svc)) {
                             sh """
                                 if [ -f package.json ]; then
-                                    npm test -- --ci --reporters=default --reporters=jest-junit 2>/dev/null || true
+                                    if grep -q '"test:ci"' package.json; then
+                                        npm run test:ci
+                                    else
+                                        npm test -- --ci --reporters=default --reporters=jest-junit
+                                    fi
                                 elif [ -f requirements.txt ]; then
                                     if [ -d .venv ]; then . .venv/bin/activate; fi
-                                    python3 -m pytest --junitxml=test-results.xml || true
+                                    python3 -m pytest --junitxml=test-results.xml
                                 fi
                             """
                         }
