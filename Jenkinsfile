@@ -134,7 +134,7 @@ pipeline {
         kubernetes {
             defaultContainer 'devops'
             idleMinutes 5
-            yaml env.IS_MAIN == 'true' ? getFullPodYaml() : getLightweightPodYaml()
+            yaml env.BRANCH_NAME == 'main' ? getFullPodYaml() : getLightweightPodYaml()
         }
     }
 
