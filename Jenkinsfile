@@ -54,10 +54,10 @@ spec:
     workingDir: /home/jenkins/agent
     resources:
       requests:
-        memory: "512Mi"
+        memory: "1Gi"
         cpu: "500m"
       limits:
-        memory: "1Gi"
+        memory: "3Gi"
         cpu: "1000m"
     volumeMounts:
     - name: build-cache
