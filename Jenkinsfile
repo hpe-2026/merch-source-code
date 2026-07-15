@@ -269,7 +269,7 @@ pipeline {
                                 def parts = filePath.tokenize('/')
                                 if (parts.size() >= 2 && parts[0] == 'services') {
                                     def candidate = parts[1]
-                                    if (ALL.agent/workspace/merch-pipeline_feature_test/services/[candidate]) {
+                                    if (ALL_SERVICES.containsKey(candidate)) {
                                         changedSet << candidate
                                     }
                                 }
