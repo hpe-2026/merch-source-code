@@ -60,7 +60,8 @@
             "usermodel.clientRoleMapping.clientId": "nitte-client"
           }
         }
-      ]
+      ],
+      "secret": "nitte-client-secret"
     }
   ],
   "users": [
