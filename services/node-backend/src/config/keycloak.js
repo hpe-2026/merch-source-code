@@ -12,14 +12,16 @@ class KeycloakConfig {
   constructor() {
     // Keycloak server configuration
     this.serverUrl = process.env.KEYCLOAK_SERVER_URL || 'http://keycloak:8080';
-    this.realm = process.env.KEYCLOAK_REALM || 'nitte-realm';
+    this.realm = process.env.KEYCLOAK_REALM || 'nitte-users';
+    // Support multiple realms for token validation (comma-separated)
+    this.validationRealms = (process.env.KEYCLOAK_VALIDATION_REALMS || this.realm).split(',').map(r => r.trim());
     this.clientId = process.env.KEYCLOAK_CLIENT_ID || 'nitte-client';
     // No default — config/index.js enforces this is set at startup
     this.clientSecret = process.env.KEYCLOAK_CLIENT_SECRET;
 
-    // Cache for public key (JWKS)
-    this.cachedPublicKey = null;
-    this.publicKeyFetchTime = null;
+    // Cache for public keys (JWKS) — one per realm
+    this.cachedPublicKeys = {};
+    this.publicKeyFetchTimes = {};
     this.publicKeyTTL = 3600000; // 1 hour
 
     // JWT configuration
@@ -55,34 +57,36 @@ class KeycloakConfig {
   }
 
   /**
-   * Fetch and cache public key (JWKS) from Keycloak
+   * Fetch and cache public key (JWKS) from Keycloak for a specific realm
    */
-  async getPublicKey() {
+  async getPublicKey(realmOverride) {
+    const realm = realmOverride || this.realm;
     try {
       // Check if cached key is still valid
-      if (this.cachedPublicKey && this.publicKeyFetchTime) {
+      if (this.cachedPublicKeys[realm] && this.publicKeyFetchTimes[realm]) {
         const now = Date.now();
-        if (now - this.publicKeyFetchTime < this.publicKeyTTL) {
-          return this.cachedPublicKey;
+        if (now - this.publicKeyFetchTimes[realm] < this.publicKeyTTL) {
+          return this.cachedPublicKeys[realm];
         }
       }
 
       // Fetch JWKS from Keycloak
-      const response = await axios.get(this.getJwksUrl(), {
+      const jwksUrl = `${this.serverUrl}/realms/${realm}/protocol/openid-connect/certs`;
+      const response = await axios.get(jwksUrl, {
         timeout: 5000,
       });
 
       const jwks = response.data;
 
       // Cache the key for future use
-      this.cachedPublicKey = jwks;
-      this.publicKeyFetchTime = Date.now();
+      this.cachedPublicKeys[realm] = jwks;
+      this.publicKeyFetchTimes[realm] = Date.now();
 
-      logger.debug('Fetched JWKS from Keycloak and cached');
+      logger.debug(`Fetched JWKS from Keycloak realm ${realm} and cached`);
       return jwks;
     } catch (error) {
-      logger.error('Failed to fetch JWKS from Keycloak:', error.message);
-      throw new Error('Unable to fetch public key from Keycloak');
+      logger.error(`Failed to fetch JWKS from Keycloak realm ${realm}:`, error.message);
+      throw new Error(`Unable to fetch public key from Keycloak realm ${realm}`);
     }
   }
 
@@ -248,7 +252,7 @@ class KeycloakConfig {
 
   /**
    * Verify a Keycloak access token's RS256 signature against JWKS.
-   * Uses Node's built-in JWK→KeyObject conversion (no jwks-rsa dep needed).
+   * Tries all configured validation realms (supports multi-realm setup).
    */
   async verifyAccessToken(token) {
     if (!token || token.split('.').length !== 3) {
@@ -258,24 +262,27 @@ class KeycloakConfig {
     const [headerB64] = token.split('.');
     const header = JSON.parse(Buffer.from(headerB64, 'base64').toString('utf-8'));
 
-    const jwks = await this.getPublicKey();
-    const keys = jwks?.keys || [];
-    const jwk = keys.find((k) => k.kid === header.kid) || keys[0];
-    if (!jwk) {
-      throw new Error('No matching JWK for token kid');
+    // Try each validation realm's JWKS until one has a matching key
+    let lastError = null;
+    for (const realm of this.validationRealms) {
+      try {
+        const jwks = await this.getPublicKey(realm);
+        const keys = jwks?.keys || [];
+        const jwk = keys.find((k) => k.kid === header.kid);
+        if (!jwk) continue; // This realm doesn't have the key, try next
+
+        const publicKey = crypto.createPublicKey({ key: jwk, format: 'jwk' });
+        const decoded = jwt.verify(token, publicKey, {
+          algorithms: ['RS256'],
+        });
+        return decoded;
+      } catch (e) {
+        lastError = e;
+        continue;
+      }
     }
 
-    const publicKey = crypto.createPublicKey({ key: jwk, format: 'jwk' });
-
-    // Note: issuer is intentionally NOT enforced — in dev the issuer URL
-    // depends on whether the request originated from inside the docker
-    // network or the host browser. We still validate signature, expiry,
-    // algorithm, and audience.
-    const decoded = jwt.verify(token, publicKey, {
-      algorithms: ['RS256'],
-    });
-
-    return decoded;
+    throw lastError || new Error('No matching JWK for token kid in any configured realm');
   }
 
   /**
