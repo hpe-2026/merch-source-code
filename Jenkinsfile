@@ -1,5 +1,5 @@
 // =============================================================================
-// Jenkinsfile  —  merch-source-code (Production-Ready)
+// Jenkinsfile - merch-source-code (OPTIMIZED - No Wasted Builds)
 // =============================================================================
 
 def ALL_SERVICES = [
@@ -33,17 +33,50 @@ def resetKanikoContainerAfterBuild() {
     )
 }
 
-pipeline {
-   agent {
-    kubernetes {
-        defaultContainer 'devops'
-        idleMinutes 30
-        yaml '''
+// =============================================================================
+// DYNAMIC POD TEMPLATES - Only provision what's needed
+// =============================================================================
+
+def getLightweightPodYaml() {
+    """
 apiVersion: v1
 kind: Pod
 metadata:
   labels:
-    app: merch-build
+    app: merch-build-light
+spec:
+  serviceAccountName: jenkins
+  restartPolicy: Never
+  containers:
+  - name: devops
+    image: 192.168.56.10:30082/merch-docker/devops-tools:latest
+    command: ["sleep", "99d"]
+    tty: true
+    workingDir: /home/jenkins/agent
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "500m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+    volumeMounts:
+    - name: build-cache
+      mountPath: /home/jenkins/.npm
+  volumes:
+  - name: build-cache
+    persistentVolumeClaim:
+      claimName: jenkins-build-cache
+"""
+}
+
+def getFullPodYaml() {
+    """
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: merch-build-full
 spec:
   serviceAccountName: jenkins
   restartPolicy: Never
@@ -90,7 +123,18 @@ spec:
   - name: build-cache
     persistentVolumeClaim:
       claimName: jenkins-build-cache
-'''
+"""
+}
+
+pipeline {
+    // =============================================================================
+    // CHOOSE POD TEMPLATE BASED ON BUILD TYPE
+    // =============================================================================
+    agent {
+        kubernetes {
+            defaultContainer 'devops'
+            idleMinutes 5
+            yaml env.IS_MAIN == 'true' ? getFullPodYaml() : getLightweightPodYaml()
         }
     }
 
@@ -111,30 +155,38 @@ spec:
         CONFIG_REPO_DIR = 'hpe-merch-config'
         CONFIG_REPO_BRANCH = 'main'
         GITHUB_CRED_ID = 'github-pat'
-        NEXUS_CRED_ID = 'nexus-creds'
+        NEXUS_CRED_ID  = 'nexus-creds'
     }
 
     stages {
         stage('Setup & Checkout') {
             steps {
-                sh '''
-                   
-                '''
                 sh 'git config --global --add safe.directory "${WORKSPACE}"'
                 script {
-                    env.IS_PR = (env.CHANGE_ID != null) ? 'true' : 'false'
+                    env.IS_PR   = (env.CHANGE_ID != null) ? 'true' : 'false'
                     env.IS_MAIN = (env.BRANCH_NAME == 'main') ? 'true' : 'false'
                     env.IMAGE_TAG = ""
 
-                    // Shallow clone for PRs/feature branches; full tags for main (semantic-release)
                     if (env.IS_MAIN == 'true') {
                         checkout scm
+                    } else if (env.IS_PR == 'true') {
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: scm.branches,
+                            extensions: [
+                                [$class: 'CloneOption', depth: 0, shallow: false, noTags: false],
+                                [$class: 'LocalBranch'],
+                                [$class: 'MergeBefore'],
+                            ],
+                            userRemoteConfigs: scm.userRemoteConfigs
+                        ])
                     } else {
                         checkout([
                             $class: 'GitSCM',
                             branches: scm.branches,
                             extensions: [
-                                [$class: 'CloneOption', depth: 1, shallow: true, noTags: true]
+                                [$class: 'CloneOption', depth: 200, shallow: true, noTags: true],
+                                [$class: 'LocalBranch'],
                             ],
                             userRemoteConfigs: scm.userRemoteConfigs
                         ])
@@ -142,7 +194,6 @@ spec:
 
                     env.GIT_SHORT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                 }
-                // Root package: generate lockfile if missing, then use npm ci with persistent cache
                 sh '''
                     if [ ! -f package-lock.json ]; then
                         npm install --package-lock-only --no-audit --no-fund
@@ -155,20 +206,18 @@ spec:
         stage('Detect Changed Services') {
             steps {
                 script {
-                    def baseRef
-                    if (env.IS_PR == 'true') {
-                        sh "git fetch origin ${env.CHANGE_TARGET} --depth=100"
-                        baseRef = "origin/${env.CHANGE_TARGET}"
-                    } else {
-                        sh 'git fetch origin main --depth=100'
-                        def hasPrev = sh(script: 'git rev-parse HEAD~1 >/dev/null 2>&1', returnStatus: true) == 0
-                        baseRef = hasPrev ? 'HEAD~1' : null
-                    }
                     def changedSet = [] as Set
-                    if (baseRef) {
-                        def diffOut = sh(script: "git diff --name-only ${baseRef}...HEAD 2>/dev/null || true", returnStdout: true).trim()
+
+                    if (env.IS_PR == 'true') {
+                        def targetRef = "origin/${env.CHANGE_TARGET}"
+                        sh "git fetch origin ${env.CHANGE_TARGET} --depth=200 2>/dev/null || true"
+                        def diffOut = sh(
+                            script: "git diff --name-only ${targetRef}...HEAD 2>/dev/null || git diff --name-only ${targetRef} HEAD 2>/dev/null || true",
+                            returnStdout: true
+                        ).trim()
+                        echo "PR diff output: '${diffOut}'"
                         diffOut.split('\n').each { filePath ->
-                            if (!filePath) return
+                            if (!filePath.trim()) return
                             def parts = filePath.tokenize('/')
                             if (parts.size() >= 2 && parts[0] == 'services') {
                                 def candidate = parts[1]
@@ -177,11 +226,66 @@ spec:
                                 }
                             }
                         }
+
+                    } else if (env.IS_MAIN == 'true') {
+                        def lastTag = sh(
+                            script: 'git describe --tags --abbrev=0 2>/dev/null || echo ""',
+                            returnStdout: true
+                        ).trim()
+                        if (lastTag) {
+                            def diffOut = sh(
+                                script: "git diff --name-only ${lastTag}...HEAD 2>/dev/null || true",
+                                returnStdout: true
+                            ).trim()
+                            echo "Main diff (since ${lastTag}): '${diffOut}'"
+                            diffOut.split('\n').each { filePath ->
+                                if (!filePath.trim()) return
+                                def parts = filePath.tokenize('/')
+                                if (parts.size() >= 2 && parts[0] == 'services') {
+                                    def candidate = parts[1]
+                                    if (ALL_SERVICES.containsKey(candidate)) {
+                                        changedSet << candidate
+                                    }
+                                }
+                            }
+                        } else {
+                            echo "No previous tag found - building all services"
+                        }
+
+                    } else {
+                        sh 'git fetch origin main --depth=200 2>/dev/null || true'
+                        def mergeBase = sh(
+                            script: 'git merge-base origin/main HEAD 2>/dev/null || echo ""',
+                            returnStdout: true
+                        ).trim()
+                        if (mergeBase) {
+                            def diffOut = sh(
+                                script: "git diff --name-only ${mergeBase}...HEAD 2>/dev/null || git diff --name-only ${mergeBase} HEAD 2>/dev/null || true",
+                                returnStdout: true
+                            ).trim()
+                            echo "Feature branch diff (since ${mergeBase}): '${diffOut}'"
+                            diffOut.split('\n').each { filePath ->
+                                if (!filePath.trim()) return
+                                def parts = filePath.tokenize('/')
+                                if (parts.size() >= 2 && parts[0] == 'services') {
+                                    def candidate = parts[1]
+                                    if (ALL.agent/workspace/merch-pipeline_feature_test/services/[candidate]) {
+                                        changedSet << candidate
+                                    }
+                                }
+                            }
+                        } else {
+                            echo "Could not find merge-base - building all services"
+                        }
                     }
+
                     if (changedSet.isEmpty()) {
+                        echo "WARNING: No service changes detected - falling back to build ALL services"
                         changedSet = ALL_SERVICES.keySet() as Set
                     }
+
                     env.SERVICES_TO_BUILD = changedSet.join(',')
+                    echo "Services to build: ${env.SERVICES_TO_BUILD}"
                 }
             }
         }
@@ -228,22 +332,36 @@ spec:
         stage('Unit Tests & Coverage') {
             steps {
                 script {
+                    def testFailed = false
                     env.SERVICES_TO_BUILD.split(',').each { svcName ->
                         def svc = svcName.trim()
                         dir(svcDir(ALL_SERVICES, svc)) {
-                            sh """
-                                if [ -f package.json ]; then
-if grep -q '"test:ci"' package.json; then
-                                        JWT_SECRET=test-secret-ci-only KEYCLOAK_CLIENT_SECRET=test-secret-ci-only npm run test:ci
-                                    else
-                                        JWT_SECRET=test-secret-ci-only KEYCLOAK_CLIENT_SECRET=test-secret-ci-only npm test -- --ci --reporters=default --reporters=jest-junit
+                            def result = sh(
+                                script: """
+                                    if [ -f package.json ]; then
+                                        if grep -q '"test:ci"' package.json; then
+                                            JWT_SECRET=test-secret-ci-only KEYCLOAK_CLIENT_SECRET=test-secret-ci-only npm run test:ci
+                                        else
+                                            JWT_SECRET=test-secret-ci-only KEYCLOAK_CLIENT_SECRET=test-secret-ci-only npm test -- --ci --reporters=default --reporters=jest-junit
+                                        fi
+                                    elif [ -f requirements.txt ]; then
+                                        if [ -d .venv ]; then . .venv/bin/activate; fi
+                                        python3 -m pytest --junitxml=test-results.xml
                                     fi
-                                elif [ -f requirements.txt ]; then
-                                    if [ -d .venv ]; then . .venv/bin/activate; fi
-                                    python3 -m pytest --junitxml=test-results.xml || true
-                                fi
-                            """
+                                """,
+                                returnStatus: true
+                            )
+                            if (result != 0) {
+                                echo "WARNING: Tests FAILED in service: ${svc}"
+                                testFailed = true
+                            }
                         }
+                    }
+                    if (testFailed && env.IS_PR == 'true') {
+                        error("PR tests failed - blocking merge")
+                    } else if (testFailed) {
+                        currentBuild.result = 'UNSTABLE'
+                        echo "WARNING: Tests failed - build marked UNSTABLE"
                     }
                 }
             }
@@ -254,6 +372,10 @@ if grep -q '"test:ci"' package.json; then
             }
         }
 
+        // =========================================================================
+        // EVERYTHING BELOW ONLY RUNS ON MAIN
+        // =========================================================================
+
         stage('Calculate Next Version (Dry Run)') {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
@@ -263,9 +385,9 @@ if grep -q '"test:ci"' package.json; then
                         if (fileExists('.version')) {
                             env.SEMVER = readFile('.version').trim()
                             env.IMAGE_TAG = "v${env.SEMVER}"
-                            echo "Calculated next release version: ${env.IMAGE_TAG}"
+                            echo "Next release version: ${env.IMAGE_TAG}"
                         } else {
-                            echo "No new version calculated by Semantic Release. Skipping build and deploy."
+                            echo "No release needed. Valid types: feat:, fix:, BREAKING CHANGE:"
                             env.IMAGE_TAG = 'NO_RELEASE'
                         }
                     }
@@ -274,7 +396,7 @@ if grep -q '"test:ci"' package.json; then
         }
 
         stage('Kaniko Build & Push Images') {
-            when { 
+            when {
                 allOf {
                     expression { env.IS_MAIN == 'true' }
                     expression { env.IMAGE_TAG != '' && env.IMAGE_TAG != 'NO_RELEASE' }
@@ -288,7 +410,7 @@ if grep -q '"test:ci"' package.json; then
                         def imageRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:${env.IMAGE_TAG}"
                         def latestRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:latest"
                         def cacheRepo = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}/cache"
-                        
+
                         container('kaniko') {
                             retry(3) {
                                 sh(
@@ -300,6 +422,7 @@ if grep -q '"test:ci"' package.json; then
                                           --destination="${latestRef}" \\
                                           --cache=true \\
                                           --cache-repo="${cacheRepo}" \\
+                                          --skip-unused-stages \\
                                           --snapshot-mode=redo \\
                                           --insecure --insecure-pull --skip-tls-verify \\
                                           --log-format=text --verbosity=warn --cleanup
@@ -314,7 +437,7 @@ if grep -q '"test:ci"' package.json; then
         }
 
         stage('Security Scan & SBOM') {
-            when { 
+            when {
                 allOf {
                     expression { env.IS_MAIN == 'true' }
                     expression { env.IMAGE_TAG != '' && env.IMAGE_TAG != 'NO_RELEASE' }
@@ -325,13 +448,11 @@ if grep -q '"test:ci"' package.json; then
                     env.SERVICES_TO_BUILD.split(',').each { svcName ->
                         def svc = svcName.trim()
                         def imageRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:${env.IMAGE_TAG}"
-                        
+
                         container('security') {
                             sh """
-                                echo "Scanning image ${imageRef} for vulnerabilities..."
+                                echo "Scanning ${imageRef}..."
                                 trivy image --severity CRITICAL,HIGH --no-progress ${imageRef} || true
-                                
-                                echo "Generating SBOM for ${imageRef}..."
                                 trivy image --format spdx-json --output sbom-${svc}.json ${imageRef} || true
                             """
                         }
@@ -341,7 +462,7 @@ if grep -q '"test:ci"' package.json; then
         }
 
         stage('GitOps Config Update') {
-            when { 
+            when {
                 allOf {
                     expression { env.IS_MAIN == 'true' }
                     expression { env.IMAGE_TAG != '' && env.IMAGE_TAG != 'NO_RELEASE' }
@@ -352,10 +473,9 @@ if grep -q '"test:ci"' package.json; then
                     sh """
                         git config --global user.email "jenkins@nitte.edu"
                         git config --global user.name "Jenkins Automation"
-                        
+
                         rm -rf ${env.CONFIG_REPO_DIR}
                         git clone -b ${env.CONFIG_REPO_BRANCH} https://${GIT_USER}:${GIT_PASS}@github.com/hpe-2026/hpe-merch-config.git ${env.CONFIG_REPO_DIR}
-                        
                         cd ${env.CONFIG_REPO_DIR}
                     """
                     script {
@@ -379,7 +499,7 @@ if grep -q '"test:ci"' package.json; then
         }
 
         stage('Publish Release') {
-            when { 
+            when {
                 allOf {
                     expression { env.IS_MAIN == 'true' }
                     expression { env.IMAGE_TAG != '' && env.IMAGE_TAG != 'NO_RELEASE' }
@@ -392,19 +512,19 @@ if grep -q '"test:ci"' package.json; then
             }
         }
     }
+
     post {
         always {
             cleanWs()
-            echo "Pipeline complete. Notification sent."
         }
         success {
             script {
                 try {
                     mail to: 'nittemerchandise@gmail.com',
-                         subject: "SUCCESS: Jenkins Build: ${env.JOB_NAME} [Build #${env.BUILD_NUMBER}]",
-                         body: "The build completed successfully!\n\nView the logs here: ${env.BUILD_URL}"
+                         subject: "SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                         body: "Branch: ${env.BRANCH_NAME}\nServices: ${env.SERVICES_TO_BUILD}\n${env.BUILD_URL}"
                 } catch (Exception e) {
-                    echo "WARNING: Failed to send success email notification: ${e.message}"
+                    echo "WARNING: Failed to send success email: ${e.message}"
                 }
             }
         }
@@ -412,10 +532,21 @@ if grep -q '"test:ci"' package.json; then
             script {
                 try {
                     mail to: 'nittemerchandise@gmail.com',
-                         subject: "FAILURE: Jenkins Build: ${env.JOB_NAME} [Build #${env.BUILD_NUMBER}]",
-                         body: "The build failed during execution.\n\nView the logs here: ${env.BUILD_URL}"
+                         subject: "FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                         body: "Branch: ${env.BRANCH_NAME}\n${env.BUILD_URL}"
                 } catch (Exception e) {
-                    echo "WARNING: Failed to send failure email notification: ${e.message}"
+                    echo "WARNING: Failed to send failure email: ${e.message}"
+                }
+            }
+        }
+        unstable {
+            script {
+                try {
+                    mail to: 'nittemerchandise@gmail.com',
+                         subject: "UNSTABLE: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                         body: "Branch: ${env.BRANCH_NAME}\nServices: ${env.SERVICES_TO_BUILD}\n${env.BUILD_URL}"
+                } catch (Exception e) {
+                    echo "WARNING: Failed to send unstable email: ${e.message}"
                 }
             }
         }
