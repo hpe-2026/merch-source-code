@@ -14,9 +14,13 @@ mock_db.__getitem__.return_value = mock_collection
 async def override_get_database():
     return mock_db
 
-app.dependency_overrides[get_database] = override_get_database
-
 client = TestClient(app)
+
+@pytest.fixture(autouse=True)
+def _override_db():
+    app.dependency_overrides[get_database] = override_get_database
+    yield
+    app.dependency_overrides.pop(get_database, None)
 
 @pytest.fixture
 def reset_mocks():
