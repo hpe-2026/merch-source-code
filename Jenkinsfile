@@ -352,5 +352,15 @@ spec:
             cleanWs()
             echo "Pipeline complete. Notification sent."
         }
+        success {
+            mail to: 'nittemerchandise@gmail.com',
+                 subject: "SUCCESS: Jenkins Build: ${env.JOB_NAME} [Build #${env.BUILD_NUMBER}]",
+                 body: "The build completed successfully!\n\nView the logs here: ${env.BUILD_URL}"
+        }
+        failure {
+            mail to: 'nittemerchandise@gmail.com',
+                 subject: "FAILURE: Jenkins Build: ${env.JOB_NAME} [Build #${env.BUILD_NUMBER}]",
+                 body: "The build failed during execution.\n\nView the logs here: ${env.BUILD_URL}"
+        }
     }
 }
