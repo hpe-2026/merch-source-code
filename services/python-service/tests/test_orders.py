@@ -71,7 +71,7 @@ def test_get_order_by_id_not_found(reset_mocks):
 
     response = client.get("/api/v1/orders/507f1f77bcf86cd799439021")
     assert response.status_code == 404
-    assert response.json()["detail"] == "Order not found"
+    assert response.json()["message"] == "Order not found"
 
 def test_create_order(reset_mocks):
     mock_collection.count_documents = AsyncMock(return_value=0)

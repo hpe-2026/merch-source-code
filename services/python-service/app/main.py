@@ -262,11 +262,14 @@ async def root():
 
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
+    detail = getattr(exc, "detail", "Not Found")
+    if detail == "Not Found":
+        detail = f"Route not found: {request.method} {request.url.path}"
     return JSONResponse(
         status_code=404,
         content={
             "success": False,
-            "message": f"Route not found: {request.method} {request.url.path}"
+            "message": detail
         }
     )
 

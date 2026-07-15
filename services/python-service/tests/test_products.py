@@ -82,7 +82,7 @@ def test_get_product_by_id_not_found(reset_mocks):
 
     response = client.get("/api/v1/products/507f1f77bcf86cd799439011")
     assert response.status_code == 404
-    assert response.json()["detail"] == "Product not found"
+    assert response.json()["message"] == "Product not found"
 
 def test_get_product_by_id_invalid_id():
     response = client.get("/api/v1/products/invalid-id")
