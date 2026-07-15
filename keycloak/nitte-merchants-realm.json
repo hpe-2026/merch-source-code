@@ -1,6 +1,7 @@
 {
   "id": "nitte-merchants",
   "realm": "nitte-merchants",
+  "displayName": "NITTE Merchants",
   "enabled": true,
   "sslRequired": "none",
   "registrationAllowed": false,

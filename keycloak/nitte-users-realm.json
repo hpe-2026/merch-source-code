@@ -1,6 +1,7 @@
 {
   "id": "nitte-users",
   "realm": "nitte-users",
+  "displayName": "NITTE Users",
   "enabled": true,
   "sslRequired": "none",
   "registrationAllowed": true,
