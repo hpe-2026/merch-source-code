@@ -13,9 +13,6 @@ import {
   ChevronLeft,
   ChevronRight,
   HardDrive,
-  Archive,
-  RefreshCw,
-  Clock,
 } from 'lucide-react'
 import { API_BASE } from '../config/api'
 
@@ -34,16 +31,10 @@ export default function DatabasePanel() {
   const [error, setError] = useState(null)
   const [editingDoc, setEditingDoc] = useState(null)
   const [editJson, setEditJson] = useState('')
-  const [backups, setBackups] = useState([])
-  const [backupStatus, setBackupStatus] = useState(null)
-  const [backupLoading, setBackupLoading] = useState(false)
-  const [triggeringBackup, setTriggeringBackup] = useState(false)
 
   useEffect(() => {
     fetchCollections()
     fetchSharding()
-    fetchBackups()
-    fetchBackupStatus()
   }, [])
 
   useEffect(() => {
@@ -66,33 +57,6 @@ export default function DatabasePanel() {
       const res = await axios.get(`${API_BASE}/api/v1/admin/database/sharding`, auth())
       setSharding(res.data.data)
     } catch (err) { /* non-critical */ }
-  }
-
-  const fetchBackups = async () => {
-    try {
-      const res = await axios.get(`${API_BASE}/api/v1/backup/list`, auth())
-      setBackups(res.data.data || [])
-    } catch (err) { /* backup service may not be deployed yet */ }
-  }
-
-  const fetchBackupStatus = async () => {
-    try {
-      const res = await axios.get(`${API_BASE}/api/v1/backup/status`, auth())
-      setBackupStatus(res.data.data)
-    } catch (err) { /* non-critical */ }
-  }
-
-  const triggerBackup = async () => {
-    setTriggeringBackup(true)
-    try {
-      await axios.post(`${API_BASE}/api/v1/backup/trigger`, {}, auth())
-      await fetchBackups()
-      await fetchBackupStatus()
-    } catch (err) {
-      setError('Backup trigger failed: ' + (err.response?.data?.message || err.message))
-    } finally {
-      setTriggeringBackup(false)
-    }
   }
 
   const fetchDocs = async (name, newSkip) => {
@@ -220,67 +184,6 @@ export default function DatabasePanel() {
 
       {/* Main Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-
-        {/* Backups Section */}
-        <div className="lg:col-span-4 mb-2">
-          <div className="bg-white rounded-xl border border-slate-200 p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
-                <Archive className="w-4 h-4 text-green-600" />
-                MongoDB Backups
-              </h2>
-              <button
-                onClick={triggerBackup}
-                disabled={triggeringBackup}
-                className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition"
-              >
-                {triggeringBackup ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                {triggeringBackup ? 'Running...' : 'Backup Now'}
-              </button>
-            </div>
-
-            {backupStatus && (
-              <div className="flex items-center gap-4 mb-4 p-3 bg-slate-50 rounded-lg text-xs">
-                <div className="flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-slate-600">Schedule: Daily 2:00 AM UTC</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className={`w-2 h-2 rounded-full ${backupStatus.status === 'success' ? 'bg-green-500' : backupStatus.status === 'failed' ? 'bg-red-500' : 'bg-slate-300'}`}></span>
-                  <span className="text-slate-600">Last: {backupStatus.timestamp ? new Date(backupStatus.timestamp).toLocaleString() : 'Never'}</span>
-                </div>
-                {backupStatus.size > 0 && (
-                  <span className="text-slate-500">{(backupStatus.size / 1024).toFixed(1)} KB</span>
-                )}
-              </div>
-            )}
-
-            {backups.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-left">
-                      <th className="pb-2 font-semibold text-slate-600">Backup File</th>
-                      <th className="pb-2 font-semibold text-slate-600">Size</th>
-                      <th className="pb-2 font-semibold text-slate-600">Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {backups.map((b, i) => (
-                      <tr key={i} className="border-b border-slate-100">
-                        <td className="py-2 font-mono text-slate-800">{b.name}</td>
-                        <td className="py-2 text-slate-600">{(b.size / 1024).toFixed(1)} KB</td>
-                        <td className="py-2 text-slate-500">{new Date(b.lastModified).toLocaleString()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="text-xs text-slate-500">No backups found. Click "Backup Now" to create one.</p>
-            )}
-          </div>
-        </div>
         {/* Collections sidebar */}
         <div className="bg-white rounded-xl border border-slate-200 p-4 lg:sticky lg:top-20 self-start">
           <h2 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
