@@ -1,0 +1,17 @@
+{
+  "name": "backup-service",
+  "version": "1.0.0",
+  "description": "MongoDB backup service with MinIO storage and Prometheus metrics",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "minio": "^7.1.3",
+    "node-cron": "^3.0.3",
+    "prom-client": "^15.1.0",
+    "winston": "^3.11.0"
+  }
+}
