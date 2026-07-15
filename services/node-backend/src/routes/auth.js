@@ -74,11 +74,16 @@ router.post('/register', signupValidator, handleValidationErrors, async (req, re
  */
 router.post('/login', loginValidator, handleValidationErrors, async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, realm } = req.body;
+
+    // Build token URL — use specified realm or default
+    const tokenUrl = realm
+      ? `${keycloakConfig.serverUrl}/realms/${realm}/protocol/openid-connect/token`
+      : keycloakConfig.getTokenUrl();
 
     // Attempt to get token from Keycloak using resource owner password grant
     const loginResponse = await axios.post(
-      keycloakConfig.getTokenUrl(),
+      tokenUrl,
       new URLSearchParams({
         grant_type: 'password',
         client_id: keycloakConfig.clientId,
