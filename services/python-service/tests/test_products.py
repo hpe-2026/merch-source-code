@@ -8,7 +8,7 @@ from app.db.database import get_database
 
 # Create a mock database and collection
 mock_db = MagicMock()
-mock_collection = AsyncMock()
+mock_collection = MagicMock()
 mock_db.__getitem__.return_value = mock_collection
 
 async def override_get_database():
