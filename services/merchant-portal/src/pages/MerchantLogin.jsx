@@ -27,6 +27,7 @@ export default function MerchantLogin({ onLogin }) {
       const response = await axios.post(`${API_BASE}/api/v1/admin/auth/login`, {
         email,
         password,
+        realm: 'nitte-merchants',
       })
 
       const { tokens, data, user } = response.data

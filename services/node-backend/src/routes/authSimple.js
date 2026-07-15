@@ -194,8 +194,8 @@ router.post('/signup', signupValidator, handleValidationErrors, async (req, res)
  */
 router.post('/login', loginValidator, handleValidationErrors, async (req, res) => {
   try {
-    const { email, password } = req.body;
-    console.log('[AUTH] Login endpoint hit:', email);
+    const { email, password, realm } = req.body;
+    console.log('[AUTH] Login endpoint hit:', email, realm ? `(realm: ${realm})` : '');
 
     // Find user
     const user = await User.findOne({ email });
@@ -230,7 +230,7 @@ router.post('/login', loginValidator, handleValidationErrors, async (req, res) =
     // single source of truth for credentials and roles.
     if (user.user_id) {
       try {
-        const kcTokens = await keycloakConfig.passwordGrant(email, password);
+        const kcTokens = await keycloakConfig.passwordGrant(email, password, realm);
         const decoded = keycloakConfig.decodeToken(kcTokens.access_token);
         const userInfo = keycloakConfig.extractUserInfo(decoded);
 

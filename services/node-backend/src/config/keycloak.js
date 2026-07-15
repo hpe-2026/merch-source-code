@@ -222,10 +222,15 @@ class KeycloakConfig {
    * Direct Access Grant (Resource Owner Password) — exchange username/password
    * for an access token. Only enabled because the realm's nitte-client has
    * `directAccessGrantsEnabled: true`. In production prefer Authorization Code + PKCE.
+   * @param {string} username
+   * @param {string} password
+   * @param {string} [realmOverride] - optional realm to authenticate against (for multi-realm setups)
    */
-  async passwordGrant(username, password) {
+  async passwordGrant(username, password, realmOverride) {
+    const realm = realmOverride || this.realm;
+    const tokenUrl = `${this.serverUrl}/realms/${realm}/protocol/openid-connect/token`;
     const response = await axios.post(
-      this.getTokenUrl(),
+      tokenUrl,
       new URLSearchParams({
         grant_type: 'password',
         client_id: this.clientId,
