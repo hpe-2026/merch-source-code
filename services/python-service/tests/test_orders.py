@@ -6,6 +6,8 @@ from bson import ObjectId
 from app.main import app
 from app.db.database import get_database
 
+from datetime import datetime
+
 # Create a mock database and collection
 mock_db = MagicMock()
 mock_collection = MagicMock()
@@ -33,9 +35,12 @@ def test_get_orders(reset_mocks):
             "_id": ObjectId("507f1f77bcf86cd799439021"),
             "order_id": "ORD-00001",
             "user_id": "user123",
+            "user_email": "user@example.com",
             "status": "pending",
             "items": [],
-            "shipping_address": "Test addr"
+            "shipping_address": "Test addr",
+            "notes": "test note",
+            "created_at": datetime.utcnow()
         }
     ])
 
@@ -49,9 +54,12 @@ def test_get_order_by_id_success(reset_mocks):
         "_id": ObjectId("507f1f77bcf86cd799439021"),
         "order_id": "ORD-00001",
         "user_id": "user123",
+        "user_email": "user@example.com",
         "status": "pending",
         "items": [],
-        "shipping_address": "Test addr"
+        "shipping_address": "Test addr",
+        "notes": "test note",
+        "created_at": datetime.utcnow()
     })
 
     response = client.get("/api/v1/orders/507f1f77bcf86cd799439021")
@@ -74,13 +82,17 @@ def test_create_order(reset_mocks):
         "_id": ObjectId("507f1f77bcf86cd799439021"),
         "order_id": "ORD-00001",
         "user_id": "user123",
+        "user_email": "user@example.com",
         "status": "pending",
         "items": [],
-        "shipping_address": "Test addr"
+        "shipping_address": "Test addr",
+        "notes": "test note",
+        "created_at": datetime.utcnow()
     })
 
     order_data = {
         "user_id": "user123",
+        "user_email": "user@example.com",
         "items": [],
         "shipping_address": "Test addr",
         "status": "pending"

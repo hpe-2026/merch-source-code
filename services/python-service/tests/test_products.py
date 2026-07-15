@@ -6,6 +6,8 @@ from bson import ObjectId
 from app.main import app
 from app.db.database import get_database
 
+from datetime import datetime
+
 # Create a mock database and collection
 mock_db = MagicMock()
 mock_collection = MagicMock()
@@ -29,8 +31,28 @@ def reset_mocks():
 
 def test_get_products(reset_mocks):
     mock_collection.find.return_value.skip.return_value.limit.return_value.to_list = AsyncMock(return_value=[
-        {"_id": ObjectId("507f1f77bcf86cd799439011"), "name": "Product 1", "price": 10.0, "category": "shirts", "merchant_id": "merch1"},
-        {"_id": ObjectId("507f1f77bcf86cd799439012"), "name": "Product 2", "price": 15.0, "category": "mugs", "merchant_id": "merch2"}
+        {
+            "_id": ObjectId("507f1f77bcf86cd799439011"),
+            "name": "Product 1",
+            "price": 10.0,
+            "category": "shirts",
+            "merchant_id": "merch1",
+            "description": "shirts desc",
+            "stock": 10,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        },
+        {
+            "_id": ObjectId("507f1f77bcf86cd799439012"),
+            "name": "Product 2",
+            "price": 15.0,
+            "category": "mugs",
+            "merchant_id": "merch2",
+            "description": "mugs desc",
+            "stock": 20,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
     ])
 
     response = client.get("/api/v1/products/")
@@ -44,7 +66,11 @@ def test_get_product_by_id_success(reset_mocks):
         "name": "Product 1", 
         "price": 10.0,
         "category": "shirts",
-        "merchant_id": "merch1"
+        "merchant_id": "merch1",
+        "description": "shirts desc",
+        "stock": 10,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
     })
 
     response = client.get("/api/v1/products/507f1f77bcf86cd799439011")
@@ -72,7 +98,11 @@ def test_create_product(reset_mocks):
         "name": "New Product", 
         "price": 25.0,
         "category": "caps",
-        "merchant_id": "merch3"
+        "merchant_id": "merch3",
+        "description": "caps desc",
+        "stock": 100,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
     })
 
     product_data = {
