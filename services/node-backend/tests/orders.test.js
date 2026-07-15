@@ -1,17 +1,15 @@
-import request from 'supertest';
-import express from 'express';
-import ordersRouter from '../src/routes/orders.js';
-import pythonServiceClient from '../src/services/pythonServiceClient.js';
+import { jest } from '@jest/globals';
 
-// Mock dependencies
-jest.mock('../src/services/pythonServiceClient.js', () => ({
-  getOrders: jest.fn(),
-  getOrderById: jest.fn(),
-  createOrder: jest.fn(),
-  updateOrder: jest.fn(),
+jest.unstable_mockModule('../src/services/pythonServiceClient.js', () => ({
+  default: {
+    getOrders: jest.fn(),
+    getOrderById: jest.fn(),
+    createOrder: jest.fn(),
+    updateOrder: jest.fn(),
+  }
 }));
 
-jest.mock('../src/config/database.js', () => ({
+jest.unstable_mockModule('../src/config/database.js', () => ({
   getMongoClient: () => ({
     db: () => ({
       collection: () => ({
@@ -22,22 +20,21 @@ jest.mock('../src/config/database.js', () => ({
         }),
       }),
     }),
-  }),
+  })
 }));
 
-jest.mock('../src/metrics.js', () => ({
+jest.unstable_mockModule('../src/metrics.js', () => ({
   ordersCreated: { inc: jest.fn() },
   databaseOperations: { inc: jest.fn() },
 }));
 
-jest.mock('../src/tracing.js', () => {
+jest.unstable_mockModule('../src/tracing.js', () => {
   const spanMock = {
     setAttribute: jest.fn(),
     setAttributes: jest.fn(),
     end: jest.fn(),
   };
   return {
-    __esModule: true,
     default: {
       startSpan: jest.fn(() => spanMock),
     },
@@ -45,7 +42,7 @@ jest.mock('../src/tracing.js', () => {
   };
 });
 
-jest.mock('../src/middleware/index.js', () => ({
+jest.unstable_mockModule('../src/middleware/index.js', () => ({
   authMiddleware: (req, res, next) => {
     req.user = { userId: 'user-123', email: 'user@test.com', roles: ['user'] };
     next();
@@ -61,6 +58,11 @@ jest.mock('../src/middleware/index.js', () => ({
   },
   keycloakRequireAnyRole: () => (req, res, next) => next(),
 }));
+
+const request = (await import('supertest')).default;
+const express = (await import('express')).default;
+const ordersRouter = (await import('../src/routes/orders.js')).default;
+const pythonServiceClient = (await import('../src/services/pythonServiceClient.js')).default;
 
 const app = express();
 app.use(express.json());

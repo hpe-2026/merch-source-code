@@ -1,38 +1,50 @@
-import request from 'supertest';
-import express from 'express';
-import authRouter from '../src/routes/auth.js';
-import axios from 'axios';
-import User from '../src/schemas/user.js';
-import keycloakConfig from '../src/config/keycloak.js';
+import { jest } from '@jest/globals';
 
-// Mock dependencies
-jest.mock('axios');
-jest.mock('../src/schemas/user.js');
-jest.mock('../src/config/keycloak.js', () => ({
-  getTokenUrl: jest.fn().mockReturnValue('http://mock-keycloak/token'),
-  clientId: 'mock-client',
-  clientSecret: 'mock-secret',
-  decodeToken: jest.fn(),
-  extractUserInfo: jest.fn(),
-  getHealthStatus: jest.fn(),
-  logout: jest.fn(),
+jest.unstable_mockModule('axios', () => ({
+  default: {
+    post: jest.fn(),
+    get: jest.fn(),
+  }
 }));
-
-jest.mock('../src/metrics.js', () => ({
+jest.unstable_mockModule('../src/schemas/user.js', () => ({
+  default: {
+    findOne: jest.fn(),
+  }
+}));
+jest.unstable_mockModule('../src/config/keycloak.js', () => ({
+  default: {
+    getTokenUrl: jest.fn().mockReturnValue('http://mock-keycloak/token'),
+    clientId: 'mock-client',
+    clientSecret: 'mock-secret',
+    decodeToken: jest.fn(),
+    extractUserInfo: jest.fn(),
+    getHealthStatus: jest.fn(),
+    logout: jest.fn(),
+  }
+}));
+jest.unstable_mockModule('../src/metrics.js', () => ({
   authAttempts: { inc: jest.fn() },
 }));
-jest.mock('../src/config/logger.js', () => ({
-  info: jest.fn(),
-  error: jest.fn(),
-  warn: jest.fn(),
+jest.unstable_mockModule('../src/config/logger.js', () => ({
+  default: {
+    info: jest.fn(),
+    error: jest.fn(),
+    warn: jest.fn(),
+  }
 }));
-
-jest.mock('../src/middleware/keycloak.js', () => ({
+jest.unstable_mockModule('../src/middleware/keycloak.js', () => ({
   keycloakAuthMiddleware: (req, res, next) => {
     req.user = { userId: '123', email: 'test@admin.com', roles: ['admin'] };
     next();
   },
 }));
+
+const request = (await import('supertest')).default;
+const express = (await import('express')).default;
+const authRouter = (await import('../src/routes/auth.js')).default;
+const axios = (await import('axios')).default;
+const User = (await import('../src/schemas/user.js')).default;
+const keycloakConfig = (await import('../src/config/keycloak.js')).default;
 
 const app = express();
 app.use(express.json());

@@ -28,7 +28,7 @@ function attachIdentityToSpan(span, req) {
 const router = express.Router();
 
 const orderValidator = [
-  body('items').isArray().notEmpty().withMessage('Items array is required'),
+  body('items').isArray().withMessage('Items array is required').notEmpty().withMessage('Items array is required'),
   body('items.*.product_id').notEmpty().withMessage('Product ID is required'),
   body('items.*.quantity').isInt({ min: 1 }).withMessage('Valid quantity is required'),
   body('shipping_address').trim().notEmpty().withMessage('Shipping address is required'),
