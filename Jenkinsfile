@@ -55,7 +55,7 @@ spec:
     workingDir: /home/jenkins/agent
     resources:
       requests:
-        memory: "1Gi"
+        memory: "256Mi"
         cpu: "500m"
       limits:
         memory: "3Gi"
@@ -70,7 +70,7 @@ spec:
     workingDir: /home/jenkins/agent
     resources:
       requests:
-        memory: "512Mi"
+        memory: "256Mi"
         cpu: "500m"
       limits:
         memory: "1.5Gi"
