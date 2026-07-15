@@ -105,7 +105,14 @@
           "order:read-all",
           "user:manage"
         ]
-      }
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin@123",
+          "temporary": false
+        }
+      ]
     },
     {
       "username": "alumni@nitte.edu",
@@ -121,7 +128,14 @@
           "order:update",
           "order:read-own"
         ]
-      }
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alumni@123",
+          "temporary": false
+        }
+      ]
     },
     {
       "username": "guest_user",
@@ -129,6 +143,13 @@
       "enabled": true,
       "realmRoles": [
         "non_alumni"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Guest@123",
+          "temporary": false
+        }
       ]
     },
     {

@@ -84,7 +84,14 @@
           "product:delete",
           "order:read-all"
         ]
-      }
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "MerchantAdmin@123",
+          "temporary": false
+        }
+      ]
     },
     {
       "username": "amazon-merchant@amazon.com",
@@ -106,7 +113,14 @@
           "product:delete",
           "order:read-all"
         ]
-      }
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Amazon@123",
+          "temporary": false
+        }
+      ]
     },
     {
       "username": "flipkart-merchant@flipkart.com",
@@ -128,7 +142,14 @@
           "product:delete",
           "order:read-all"
         ]
-      }
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Flipkart@123",
+          "temporary": false
+        }
+      ]
     }
   ],
   "eventsListeners": [
