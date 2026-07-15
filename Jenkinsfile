@@ -59,6 +59,9 @@ spec:
       limits:
         memory: "1Gi"
         cpu: "1000m"
+    volumeMounts:
+    - name: build-cache
+      mountPath: /home/jenkins/.npm
   - name: kaniko
     image: gcr.io/kaniko-project/executor:debug
     command: ["sleep", "99d"]
@@ -83,6 +86,9 @@ spec:
   - name: nexus-docker-config
     secret:
       secretName: nexus-docker-config
+  - name: build-cache
+    persistentVolumeClaim:
+      claimName: jenkins-build-cache
 '''
         }
     }
@@ -114,14 +120,34 @@ spec:
                    
                 '''
                 sh 'git config --global --add safe.directory "${WORKSPACE}"'
-                checkout scm
-                sh 'npm install --no-audit --no-fund'
                 script {
-                    env.GIT_SHORT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     env.IS_PR = (env.CHANGE_ID != null) ? 'true' : 'false'
                     env.IS_MAIN = (env.BRANCH_NAME == 'main') ? 'true' : 'false'
                     env.IMAGE_TAG = ""
+
+                    // Shallow clone for PRs/feature branches; full tags for main (semantic-release)
+                    if (env.IS_MAIN == 'true') {
+                        checkout scm
+                    } else {
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: scm.branches,
+                            extensions: [
+                                [$class: 'CloneOption', depth: 1, shallow: true, noTags: true]
+                            ],
+                            userRemoteConfigs: scm.userRemoteConfigs
+                        ])
+                    }
+
+                    env.GIT_SHORT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                 }
+                // Root package: generate lockfile if missing, then use npm ci with persistent cache
+                sh '''
+                    if [ ! -f package-lock.json ]; then
+                        npm install --package-lock-only --no-audit --no-fund
+                    fi
+                    npm ci --cache /home/jenkins/.npm --prefer-offline --no-audit --no-fund
+                '''
             }
         }
 
@@ -167,7 +193,7 @@ spec:
                         dir(svcDir(ALL_SERVICES, svc)) {
                             sh """
                                 if [ -f package.json ]; then
-                                    npm ci --legacy-peer-deps
+                                    npm ci --legacy-peer-deps --cache /home/jenkins/.npm --prefer-offline
                                     npm audit --audit-level=high || echo "Ignoring audit failures for now"
                                 elif [ -f requirements.txt ]; then
                                     python3 -m venv .venv
@@ -260,6 +286,7 @@ spec:
                         def svcPath = svcDir(ALL_SERVICES, svc)
                         def imageRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:${env.IMAGE_TAG}"
                         def latestRef = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}:latest"
+                        def cacheRepo = "${env.NEXUS_REGISTRY}/${env.NEXUS_REPO_NAME}/${svc}/cache"
                         
                         container('kaniko') {
                             retry(3) {
@@ -270,6 +297,9 @@ spec:
                                           --dockerfile="${WORKSPACE}/${svcPath}/Dockerfile" \\
                                           --destination="${imageRef}" \\
                                           --destination="${latestRef}" \\
+                                          --cache=true \\
+                                          --cache-repo="${cacheRepo}" \\
+                                          --snapshot-mode=redo \\
                                           --insecure --insecure-pull --skip-tls-verify \\
                                           --log-format=text --verbosity=warn --cleanup
                                     """
