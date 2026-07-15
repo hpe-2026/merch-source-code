@@ -34,10 +34,11 @@ def resetKanikoContainerAfterBuild() {
 }
 
 pipeline {
-    agent {
-        kubernetes {
-            defaultContainer 'devops'
-            yaml '''
+   agent {
+    kubernetes {
+        defaultContainer 'devops'
+        idleMinutes 30
+        yaml '''
 apiVersion: v1
 kind: Pod
 metadata:
