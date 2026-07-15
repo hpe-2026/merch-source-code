@@ -1,7 +1,6 @@
-import logger from '../src/logger.js';
-import winston from 'winston';
+import { jest } from '@jest/globals';
 
-jest.mock('winston', () => {
+jest.unstable_mockModule('winston', () => {
   const mFormat = {
     combine: jest.fn(),
     timestamp: jest.fn(),
@@ -22,12 +21,19 @@ jest.mock('winston', () => {
     debug: jest.fn(),
     add: jest.fn(),
   };
-  return {
+  const mockWinston = {
     format: mFormat,
     transports: mTransports,
     createLogger: jest.fn(() => mLogger),
   };
+  return {
+    ...mockWinston,
+    default: mockWinston,
+  };
 });
+
+const winston = (await import('winston')).default;
+const logger = (await import('../src/logger.js')).default;
 
 describe('Logger', () => {
   it('should create winston logger', () => {

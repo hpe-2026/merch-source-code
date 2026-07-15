@@ -1,6 +1,5 @@
 import config from '../config.js';
 import logger from '../logger.js';
-import fetch from "node-fetch";
 
 class TicketService {
   constructor() {

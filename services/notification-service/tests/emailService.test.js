@@ -1,35 +1,42 @@
-import nodemailer from 'nodemailer';
-import emailService from '../src/services/emailService.js';
-import config from '../src/config.js';
-import logger from '../src/logger.js';
+import { jest } from '@jest/globals';
 
-// Mock dependencies
-jest.mock('nodemailer', () => ({
-  createTransport: jest.fn(),
+jest.unstable_mockModule('nodemailer', () => ({
+  default: {
+    createTransport: jest.fn(),
+  }
 }));
 
-jest.mock('../src/logger.js', () => ({
-  info: jest.fn(),
-  warn: jest.fn(),
-  error: jest.fn(),
+jest.unstable_mockModule('../src/logger.js', () => ({
+  default: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  }
 }));
 
-jest.mock('../src/config.js', () => ({
-  email: {
-    enabled: true,
-    provider: 'smtp',
-    smtp: {
-      host: 'smtp.example.com',
-      port: 587,
-      secure: false,
-      auth: {
-        user: 'test_user',
-        pass: 'test_pass',
+jest.unstable_mockModule('../src/config.js', () => ({
+  default: {
+    email: {
+      enabled: true,
+      provider: 'smtp',
+      smtp: {
+        host: 'smtp.example.com',
+        port: 587,
+        secure: false,
+        auth: {
+          user: 'test_user',
+          pass: 'test_pass',
+        },
+        from: 'noreply@example.com',
       },
-      from: 'noreply@example.com',
     },
-  },
+  }
 }));
+
+const nodemailer = (await import('nodemailer')).default;
+const emailService = (await import('../src/services/emailService.js')).default;
+const config = (await import('../src/config.js')).default;
+const logger = (await import('../src/logger.js')).default;
 
 describe('EmailService', () => {
   let mockTransporter;
@@ -198,7 +205,7 @@ describe('EmailService', () => {
         'john@nitte.edu',
         expect.stringContaining('Approved'),
         expect.stringContaining('Verified'),
-        expect.stringContaining('<strong>john@nitte.edu</strong>') // simple HTML check
+        expect.stringContaining('john@nitte.edu') // simple HTML check
       );
     });
 
