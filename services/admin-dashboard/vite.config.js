@@ -23,5 +23,10 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/jaeger/, '')
       }
     }
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: './src/setupTests.js',
   }
 })

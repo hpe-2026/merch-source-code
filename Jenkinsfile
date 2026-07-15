@@ -206,10 +206,14 @@ spec:
                         dir(svcDir(ALL_SERVICES, svc)) {
                             sh """
                                 if [ -f package.json ]; then
-                                    npm test -- --ci --reporters=default --reporters=jest-junit 2>/dev/null || true
+                                    if grep -q '"test:ci"' package.json; then
+                                        npm run test:ci
+                                    else
+                                        npm test -- --ci --reporters=default --reporters=jest-junit
+                                    fi
                                 elif [ -f requirements.txt ]; then
                                     if [ -d .venv ]; then . .venv/bin/activate; fi
-                                    python3 -m pytest --junitxml=test-results.xml || true
+                                    python3 -m pytest --junitxml=test-results.xml
                                 fi
                             """
                         }
@@ -347,6 +351,16 @@ spec:
         always {
             cleanWs()
             echo "Pipeline complete. Notification sent."
+        }
+        success {
+            mail to: 'nittemerchandise@gmail.com',
+                 subject: "SUCCESS: Jenkins Build: ${env.JOB_NAME} [Build #${env.BUILD_NUMBER}]",
+                 body: "The build completed successfully!\n\nView the logs here: ${env.BUILD_URL}"
+        }
+        failure {
+            mail to: 'nittemerchandise@gmail.com',
+                 subject: "FAILURE: Jenkins Build: ${env.JOB_NAME} [Build #${env.BUILD_NUMBER}]",
+                 body: "The build failed during execution.\n\nView the logs here: ${env.BUILD_URL}"
         }
     }
 }
