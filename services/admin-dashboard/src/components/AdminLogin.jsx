@@ -91,7 +91,7 @@ export default function AdminLogin({ onLoginSuccess }) {
           <div className="flex items-center gap-2.5">
             <ShieldCheck className="w-7 h-7 text-white" strokeWidth={2.25} />
             <div className="leading-tight">
-              <p className="text-sm font-extrabold tracking-tight text-slate-900"> TEST Admin</p>
+              <p className="text-sm font-extrabold tracking-tight text-slate-900"> Admin </p>
               <p className="text-[11px] font-medium text-slate-500">Operations Console</p>
             </div>
           </div>
@@ -112,7 +112,7 @@ export default function AdminLogin({ onLoginSuccess }) {
               <Shield className="w-6 h-6" />
             </div>
             <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-              HPE MEET JULY 8 ADMIN DASHBOARD
+              ADMIN DASHBOARD
             </h1>
             <p className="mt-1.5 text-sm text-slate-500">
               Platform administration console. Manage users, products, and system settings.

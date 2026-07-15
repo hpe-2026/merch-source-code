@@ -9,7 +9,12 @@
   "roles": {
     "realm": [
       {
-        "name": "merchant-admin"
+        "name": "merchant-admin",
+        "description": "[RBAC] Merchant administrator - can manage all resources for their merchant"
+      },
+      {
+        "name": "merchant-staff",
+        "description": "[RBAC] Merchant staff - limited access to merchant resources"
       }
     ]
   },
@@ -18,7 +23,6 @@
       "clientId": "nitte-client",
       "enabled": true,
       "publicClient": false,
-      "secret": "nitte-merchant-client-secret",
       "directAccessGrantsEnabled": true,
       "standardFlowEnabled": true,
       "redirectUris": [
@@ -27,6 +31,35 @@
       ],
       "webOrigins": [
         "http://merchant.192.168.56.200.nip.io"
+      ],
+      "protocolMappers": [
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "client-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "config": {
+            "claim.name": "resource_access.${client_id}.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "usermodel.clientRoleMapping.clientId": "nitte-client"
+          }
+        }
       ]
     }
   ],
@@ -36,13 +69,6 @@
       "email": "merchant-admin@nitte.edu",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [
-        {
-          "type": "password",
-          "value": "MerchantAdmin@123",
-          "temporary": false
-        }
-      ],
       "realmRoles": [
         "merchant-admin"
       ],
@@ -50,20 +76,28 @@
         "merchant_id": [
           "nitte-official-store"
         ]
-      }
+      },
+      "clientRoles": {
+        "nitte-client": [
+          "product:create",
+          "product:update",
+          "product:delete",
+          "order:read-all"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "MerchantAdmin@123",
+          "temporary": false
+        }
+      ]
     },
     {
       "username": "amazon-merchant@amazon.com",
       "email": "amazon-merchant@amazon.com",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [
-        {
-          "type": "password",
-          "value": "Amazon@123",
-          "temporary": false
-        }
-      ],
       "realmRoles": [
         "merchant-admin"
       ],
@@ -71,20 +105,28 @@
         "merchant_id": [
           "amazon-store"
         ]
-      }
+      },
+      "clientRoles": {
+        "nitte-client": [
+          "product:create",
+          "product:update",
+          "product:delete",
+          "order:read-all"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Amazon@123",
+          "temporary": false
+        }
+      ]
     },
     {
       "username": "flipkart-merchant@flipkart.com",
       "email": "flipkart-merchant@flipkart.com",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [
-        {
-          "type": "password",
-          "value": "Flipkart@123",
-          "temporary": false
-        }
-      ],
       "realmRoles": [
         "merchant-admin"
       ],
@@ -92,7 +134,22 @@
         "merchant_id": [
           "flipkart-store"
         ]
-      }
+      },
+      "clientRoles": {
+        "nitte-client": [
+          "product:create",
+          "product:update",
+          "product:delete",
+          "order:read-all"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Flipkart@123",
+          "temporary": false
+        }
+      ]
     }
   ],
   "eventsListeners": [

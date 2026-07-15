@@ -164,7 +164,7 @@ class SMSService {
 
     try {
       if (this.provider === 'console') {
-        return await this.sendConsoleMS(phoneNumber, message);
+        return await this.sendConsoleSMS(phoneNumber, message);
       } else if (this.provider === 'twilio') {
         return await this.sendViaTwilio(phoneNumber, message);
       } else if (this.provider === 'aws-sns') {
@@ -179,7 +179,7 @@ class SMSService {
       logger.error('Error sending SMS:', error.message);
       // Fallback to console mode
       try {
-        return await this.sendConsoleMS(phoneNumber, message);
+        return await this.sendConsoleSMS(phoneNumber, message);
       } catch (fallbackError) {
         logger.error('SMS sending failed completely:', fallbackError.message);
         return { success: false, message: error.message };
