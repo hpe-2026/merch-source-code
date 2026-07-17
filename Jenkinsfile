@@ -123,12 +123,59 @@ pipeline {
             }
         }
 
+        stage('Version Bump & Tag (Main Only)') {
+            when { expression { env.IS_MAIN == 'true' } }
+            steps {
+                withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID, usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+                    script {
+                        // 1. Read and bump version
+                        if (!fileExists('version.txt')) {
+                            writeFile file: 'version.txt', text: '1.0.0'
+                            env.NEW_VERSION = '1.0.0'
+                        } else {
+                            def currentVersion = readFile('version.txt').trim()
+                            def parts = currentVersion.split('\\.')
+                            def major = parts[0]
+                            def minor = parts[1]
+                            def patch = parts[2].toInteger() + 1
+                            env.NEW_VERSION = "${major}.${minor}.${patch}"
+                            writeFile file: 'version.txt', text: env.NEW_VERSION
+                        }
+
+                        env.SHORT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                        env.IMAGE_TAG = "${env.NEW_VERSION}-${env.SHORT_SHA}"
+                        env.GIT_TAG = "v${env.NEW_VERSION}"
+
+                        // 2. Check if tag exists
+                        def tagExists = sh(script: "git ls-remote --tags origin ${env.GIT_TAG} | grep ${env.GIT_TAG} || true", returnStdout: true).trim()
+                        if (tagExists != '') {
+                            error("Tag ${env.GIT_TAG} already exists. Failing to prevent overwrite.")
+                        }
+
+                        // 3. Commit version.txt and push tag
+                        sh """
+                            git config --global user.email "jenkins@nitte.edu"
+                            git config --global user.name "Jenkins Automation"
+                            
+                            REPO_URL=\$(git config remote.origin.url | sed -e 's/.*github.com[:\\/]//' -e 's/\\.git\$//')
+                            git remote set-url origin "https://${GIT_USER}:${GIT_PASS}@github.com/\${REPO_URL}.git"
+                            
+                            git add version.txt
+                            git commit -m "chore: bump version to ${env.GIT_TAG}"
+                            git tag ${env.GIT_TAG}
+                            git push origin HEAD:main
+                            git push origin ${env.GIT_TAG}
+                        """
+                    }
+                }
+            }
+        }
+
         stage('Kaniko Build & Push (Main Only)') {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
                 script {
-                    // Quick tag generation using git commit hash
-                    env.IMAGE_TAG = "v1.0-${sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()}"
+                    // env.IMAGE_TAG and env.GIT_TAG are generated in the Version Bump & Tag stage
                     
                     env.SERVICES_TO_BUILD.split(',').each { svc ->
                         def svcPath = ALL_SERVICES[svc.trim()]
@@ -175,7 +222,7 @@ pipeline {
                     sh """
                         cd ${env.CONFIG_REPO_DIR}
                         git add .
-                        git commit -m "chore: deploy tag ${env.IMAGE_TAG} [skip ci]" || true
+                        git commit -m "chore: deploy release ${env.GIT_TAG}" || true
                         git push origin main
                     """
                 }
