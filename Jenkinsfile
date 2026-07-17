@@ -47,7 +47,6 @@ pipeline {
                     checkout scm
 
                     sh 'git config --global --add safe.directory "*"'
-                    env.COMMIT_AUTHOR_EMAIL = sh(script: "git log -1 --pretty=format:'%ae'", returnStdout: true).trim()
 
                     def commitMsg    = sh(script: 'git log -1 --pretty=%B || true', returnStdout: true).trim()
                     def commitAuthor = sh(script: 'git log -1 --pretty=format:"%an" || true', returnStdout: true).trim()
@@ -278,11 +277,11 @@ pipeline {
                 if (env.IS_PR == 'true') {
                     emailext subject: "SUCCESS: PR Build #${env.BUILD_NUMBER}",
                              body: "Your PR passed all CI checks!\n\n${env.BUILD_URL}",
-                             to: env.COMMIT_AUTHOR_EMAIL
+                             to: env.OWNER_EMAIL
                 } else {
                     emailext subject: "SUCCESS: Deployment #${env.BUILD_NUMBER}",
                              body: "Services (${env.SERVICES_TO_BUILD}) built and deployed.\n\nImage tag: ${env.IMAGE_TAG}\n\n${env.BUILD_URL}",
-                             to: "${env.OWNER_EMAIL},${env.COMMIT_AUTHOR_EMAIL}"
+                             to: env.OWNER_EMAIL
                 }
             }
         }
@@ -291,12 +290,12 @@ pipeline {
                 if (env.IS_PR == 'true') {
                     emailext subject: "FAILURE: PR Build #${env.BUILD_NUMBER}",
                              body: "Your PR failed the CI checks. Please find the attached test results.\n\n${env.BUILD_URL}",
-                             to: env.COMMIT_AUTHOR_EMAIL,
+                             to: env.OWNER_EMAIL,
                              attachmentsPattern: '**/test-results.xml, **/junit.xml'
                 } else {
                     emailext subject: "FAILURE: Deployment #${env.BUILD_NUMBER}",
                              body: "The deployment pipeline failed.\n\n${env.BUILD_URL}",
-                             to: "${env.OWNER_EMAIL},${env.COMMIT_AUTHOR_EMAIL}"
+                             to: env.OWNER_EMAIL
                 }
             }
         }
