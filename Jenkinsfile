@@ -272,36 +272,5 @@ pipeline {
         cleanup {
             cleanWs()
         }
-        success {
-            script {
-                if (env.IS_PR == 'true') {
-                    emailext subject: "SUCCESS: PR Build #${env.BUILD_NUMBER}",
-                             body: "Your PR passed all CI checks!\n\n${env.BUILD_URL}",
-                             to: "nittemerchandise@gmail.com",
-                             replyTo: "nittemerchandise@gmail.com"
-                } else {
-                    emailext subject: "SUCCESS: Deployment #${env.BUILD_NUMBER}",
-                             body: "Services (${env.SERVICES_TO_BUILD}) built and deployed.\n\nImage tag: ${env.IMAGE_TAG}\n\n${env.BUILD_URL}",
-                             to: "nittemerchandise@gmail.com",
-                             replyTo: "nittemerchandise@gmail.com"
-                }
-            }
-        }
-        failure {
-            script {
-                if (env.IS_PR == 'true') {
-                    emailext subject: "FAILURE: PR Build #${env.BUILD_NUMBER}",
-                             body: "Your PR failed the CI checks. Please find the attached test results.\n\n${env.BUILD_URL}",
-                             to: "nittemerchandise@gmail.com",
-                             replyTo: "nittemerchandise@gmail.com",
-                             attachmentsPattern: '**/test-results.xml, **/junit.xml'
-                } else {
-                    emailext subject: "FAILURE: Deployment #${env.BUILD_NUMBER}",
-                             body: "The deployment pipeline failed.\n\n${env.BUILD_URL}",
-                             to: "nittemerchandise@gmail.com",
-                             replyTo: "nittemerchandise@gmail.com"
-                }
-            }
-        }
     }
 }
