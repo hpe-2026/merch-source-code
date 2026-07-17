@@ -89,9 +89,15 @@ pipeline {
                             def result = sh(
                                 script: """
                                     if [ -f package.json ]; then
-                                        npm ci --prefer-offline
+                                        npm ci --prefer-offline --legacy-peer-deps
                                         npm run lint --if-present || true
-                                        npm test -- --ci --reporters=default --reporters=jest-junit || true
+                                        
+                                        # Vitest does not accept --ci, so we handle it differently than Jest
+                                        if grep -q '"vitest"' package.json; then
+                                            npm test || true
+                                        else
+                                            npm test -- --ci --reporters=default --reporters=jest-junit || true
+                                        fi
                                     elif [ -f requirements.txt ]; then
                                         python3 -m venv .venv
                                         . .venv/bin/activate
@@ -104,7 +110,7 @@ pipeline {
                             if (result != 0) testFailed = true
                         }
                     }
-                    if (testFailed && env.IS_PR == 'true') {
+                    if (testFailed) {
                         error("Unit tests failed!")
                     }
                 }
