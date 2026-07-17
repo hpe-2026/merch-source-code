@@ -72,10 +72,17 @@ pipeline {
                     def changedSet = [] as Set
                     def targetRef  = env.IS_PR == 'true' ? "origin/${env.CHANGE_TARGET}" : "origin/main"
 
-                    sh "git fetch origin ${env.IS_PR == 'true' ? env.CHANGE_TARGET : 'main'} --depth=200 || true"
+                    def fetchBranch = env.IS_PR == 'true' ? env.CHANGE_TARGET : 'main'
+                    sh "git fetch origin +refs/heads/${fetchBranch}:refs/remotes/origin/${fetchBranch} --depth=200 || true"
 
-                    def mergeBase = sh(script: "git merge-base ${targetRef} HEAD || echo HEAD", returnStdout: true).trim()
-                    def diffOut   = sh(script: "git diff --name-only ${mergeBase}...HEAD || true", returnStdout: true).trim()
+                    def diffOut = ""
+                    if (env.IS_PR == 'true') {
+                        def mergeBase = sh(script: "git merge-base origin/${fetchBranch} HEAD || echo HEAD", returnStdout: true).trim()
+                        diffOut = sh(script: "git diff --name-only ${mergeBase}...HEAD || true", returnStdout: true).trim()
+                    } else {
+                        // On main, diff against the previous commit to see what just merged
+                        diffOut = sh(script: "git diff --name-only HEAD~1...HEAD || true", returnStdout: true).trim()
+                    }
 
                     diffOut.split('\n').each { filePath ->
                         if (!filePath.trim()) return
@@ -148,6 +155,27 @@ pipeline {
                 always {
                     // Parse JUnit XML results for the visual test report dashboard
                     junit allowEmptyResults: true, testResults: '**/test-results.xml,**/junit.xml'
+                }
+            }
+        }
+
+        // ================================================================
+        // STAGE 3.5 — SECURITY SCAN (TRIVY)
+        // Runs for both PR builds and main merges.
+        // Scans the files of changed services for vulnerabilities.
+        // ================================================================
+        stage('Security Scan (Trivy)') {
+            steps {
+                script {
+                    env.SERVICES_TO_BUILD.split(',').each { svc ->
+                        def svcPath = ALL_SERVICES[svc.trim()]
+                        container('security') {
+                            echo "Running Trivy FS scan on ${svc}"
+                            // Scan the filesystem for HIGH and CRITICAL vulnerabilities
+                            // Returns non-zero exit code if vulnerabilities are found, failing the build
+                            sh "trivy fs --severity HIGH,CRITICAL --exit-code 1 --no-progress ${svcPath}"
+                        }
+                    }
                 }
             }
         }
