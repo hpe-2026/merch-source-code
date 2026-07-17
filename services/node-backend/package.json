@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "NODE_OPTIONS=--experimental-vm-modules jest --coverage",
+    "test": "JWT_SECRET=test-secret NODE_OPTIONS=--experimental-vm-modules jest --coverage",
     "test:watch": "jest --watch",
     "test:bdd": "npx cucumber-js --import 'features/step_definitions/**/*.js'",
     "lint": "eslint src/",

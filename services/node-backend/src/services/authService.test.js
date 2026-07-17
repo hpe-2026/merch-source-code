@@ -3,10 +3,7 @@ import authService from '../services/authService';
 import jwtModule from 'jsonwebtoken';
 
 describe('AuthService', () => {
-  beforeAll(() => {
-    process.env.JWT_SECRET = 'test-secret';
-    process.env.JWT_REFRESH_SECRET = 'test-refresh-secret';
-  });
+
 
   describe('Password Hashing', () => {
     it('should hash password successfully', async () => {
