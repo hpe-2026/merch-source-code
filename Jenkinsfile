@@ -24,8 +24,10 @@ pipeline {
     }
 
     environment {
-        // The single entry point for all images via Group Repo routing
-        NEXUS_REGISTRY = '192.168.56.10:30082'
+        // Pull base images from the Group repo (User set this to 8083 in Nexus)
+        NEXUS_REGISTRY = '192.168.56.10:30083'
+        // Push built images to the Hosted repo (User set this to 8082 in Nexus)
+        NEXUS_PUSH_REGISTRY = '192.168.56.10:30082'
         CONFIG_REPO_DIR = 'hpe-merch-config'
         GITHUB_CRED_ID = 'github-pat'
         OWNER_EMAIL = 'nittemerchandise@gmail.com'
@@ -133,8 +135,8 @@ pipeline {
                     env.SERVICES_TO_BUILD.split(',').each { svc ->
                         def svcPath = ALL_SERVICES[svc.trim()]
                         
-                        // Push routes to merch-docker via the Group Repo automatically!
-                        def imageRef = "${env.NEXUS_REGISTRY}/merch-docker/${svc.trim()}:${env.IMAGE_TAG}"
+                        // Push directly to the Hosted repo (Nexus Pro is required to push to Group)
+                        def imageRef = "${env.NEXUS_PUSH_REGISTRY}/merch-docker/${svc.trim()}:${env.IMAGE_TAG}"
                         
                         container('kaniko') {
                             sh """
