@@ -43,6 +43,14 @@ pipeline {
                     // Dynamically get the email of the developer who made the commit
                     sh 'git config --global --add safe.directory "*"'
                     env.COMMIT_AUTHOR_EMAIL = sh(script: "git log -1 --pretty=format:'%ae'", returnStdout: true).trim()
+                    
+                    def commitMsg = sh(script: 'git log -1 --pretty=%B || true', returnStdout: true).trim()
+                    def commitAuthor = sh(script: 'git log -1 --pretty=format:"%an" || true', returnStdout: true).trim()
+                    
+                    if (commitMsg.contains('[skip ci]') || commitAuthor == 'Jenkins Automation') {
+                        currentBuild.result = 'NOT_BUILT'
+                        error("Skipping build: Detected automated Jenkins commit to prevent loop.")
+                    }
                 }
             }
         }
@@ -90,19 +98,19 @@ pipeline {
                                 script: """
                                     if [ -f package.json ]; then
                                         npm ci --prefer-offline --legacy-peer-deps
-                                        npm run lint --if-present || true
+                                        npm run lint --if-present
                                         
                                         # Vitest does not accept --ci, so we handle it differently than Jest
                                         if grep -q '"vitest"' package.json; then
-                                            npm test || true
+                                            npm test
                                         else
-                                            npm test -- --ci --reporters=default --reporters=jest-junit || true
+                                            npm test -- --ci --reporters=default --reporters=jest-junit
                                         fi
                                     elif [ -f requirements.txt ]; then
                                         python3 -m venv .venv
                                         . .venv/bin/activate
                                         pip install -r requirements.txt
-                                        python3 -m pytest --junitxml=test-results.xml || true
+                                        python3 -m pytest --junitxml=test-results.xml
                                     fi
                                 """,
                                 returnStatus: true
@@ -123,49 +131,30 @@ pipeline {
             }
         }
 
-        stage('Version Bump & Tag (Main Only)') {
+        stage('Generate Version (Main Only)') {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
-                withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID, usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
-                    script {
-                        // 1. Read and bump version
-                        if (!fileExists('version.txt')) {
-                            writeFile file: 'version.txt', text: '1.0.0'
-                            env.NEW_VERSION = '1.0.0'
-                        } else {
-                            def currentVersion = readFile('version.txt').trim()
-                            def parts = currentVersion.split('\\.')
-                            def major = parts[0]
-                            def minor = parts[1]
-                            def patch = parts[2].toInteger() + 1
-                            env.NEW_VERSION = "${major}.${minor}.${patch}"
-                            writeFile file: 'version.txt', text: env.NEW_VERSION
-                        }
+                script {
+                    // 1. Read and bump version
+                    if (!fileExists('version.txt')) {
+                        env.NEW_VERSION = '1.0.0'
+                    } else {
+                        def currentVersion = readFile('version.txt').trim()
+                        def parts = currentVersion.split('\\.')
+                        def major = parts[0]
+                        def minor = parts[1]
+                        def patch = parts[2].toInteger() + 1
+                        env.NEW_VERSION = "${major}.${minor}.${patch}"
+                    }
 
-                        env.SHORT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                        env.IMAGE_TAG = "${env.NEW_VERSION}-${env.SHORT_SHA}"
-                        env.GIT_TAG = "v${env.NEW_VERSION}"
+                    env.SHORT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = "${env.NEW_VERSION}-${env.SHORT_SHA}"
+                    env.GIT_TAG = "v${env.NEW_VERSION}"
 
-                        // 2. Check if tag exists
-                        def tagExists = sh(script: "git ls-remote --tags origin ${env.GIT_TAG} | grep ${env.GIT_TAG} || true", returnStdout: true).trim()
-                        if (tagExists != '') {
-                            error("Tag ${env.GIT_TAG} already exists. Failing to prevent overwrite.")
-                        }
-
-                        // 3. Commit version.txt and push tag
-                        sh """
-                            git config --global user.email "jenkins@nitte.edu"
-                            git config --global user.name "Jenkins Automation"
-                            
-                            REPO_URL=\$(git config remote.origin.url | sed -e 's/.*github.com[:\\/]//' -e 's/\\.git\$//')
-                            git remote set-url origin "https://${GIT_USER}:${GIT_PASS}@github.com/\${REPO_URL}.git"
-                            
-                            git add version.txt
-                            git commit -m "chore: bump version to ${env.GIT_TAG}"
-                            git tag ${env.GIT_TAG}
-                            git push origin HEAD:main
-                            git push origin ${env.GIT_TAG}
-                        """
+                    // 2. Check if tag exists
+                    def tagExists = sh(script: "git ls-remote --tags origin ${env.GIT_TAG} | grep ${env.GIT_TAG} || true", returnStdout: true).trim()
+                    if (tagExists != '') {
+                        error("Tag ${env.GIT_TAG} already exists. Failing to prevent overwrite.")
                     }
                 }
             }
@@ -225,6 +214,30 @@ pipeline {
                         git commit -m "chore: deploy release ${env.GIT_TAG}" || true
                         git push origin main
                     """
+                }
+            }
+        }
+
+        stage('Commit Version & Push Tag (Main Only)') {
+            when { expression { env.IS_MAIN == 'true' } }
+            steps {
+                withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID, usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+                    script {
+                        writeFile file: 'version.txt', text: env.NEW_VERSION
+                        sh """
+                            git config --global user.email "jenkins@nitte.edu"
+                            git config --global user.name "Jenkins Automation"
+                            
+                            REPO_URL=\$(git config remote.origin.url | sed -e 's/.*github.com[:\\/]//' -e 's/\\.git\$//')
+                            git remote set-url origin "https://${GIT_USER}:${GIT_PASS}@github.com/\${REPO_URL}.git"
+                            
+                            git add version.txt
+                            git commit -m "chore: bump version to ${env.GIT_TAG} [skip ci]"
+                            git tag ${env.GIT_TAG}
+                            git push origin HEAD:main
+                            git push origin ${env.GIT_TAG}
+                        """
+                    }
                 }
             }
         }
