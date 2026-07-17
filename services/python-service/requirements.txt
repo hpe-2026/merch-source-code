@@ -1,18 +1,18 @@
-fastapi==0.109.0
+fastapi==0.111.0
 uvicorn==0.27.0
-pymongo==4.6.1
+pymongo==4.7.2
 motor==3.4.0
 pydantic==2.5.2
 pydantic-settings==2.1.0
-python-dotenv==1.0.0
-pytest==7.4.4
+python-dotenv==1.0.1
+pytest==8.2.2
 httpx==0.25.2
-gunicorn==21.2.0
+gunicorn==22.0.0
 prometheus-client==0.18.0
 jaeger-client==4.8.0
 six==1.16.0
 behave==1.2.6
-requests==2.31.0
+requests==2.32.3
 # OpenTelemetry - upgraded to 1.24.0 / 0.45b0 to resolve pkg_resources dependency.
 # opentelemetry-instrumentation >= 0.45b0 uses importlib.metadata (Python 3.8+ stdlib)
 # instead of pkg_resources, which is unavailable inside Alpine Linux venvs on Python 3.12.
