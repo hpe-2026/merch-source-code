@@ -154,42 +154,32 @@ pipeline {
 
         // ================================================================
         // STAGE 4 — GENERATE VERSION  [Main Only]
-        // Reads the current version from version.txt, calculates the next
-        // patch version, and stores everything in env vars.
-        //
-        // IMPORTANT: version.txt is NOT written here.
-        //            It is written only in Stage 7, after images and GitOps
-        //            have both succeeded.
+        // Uses semantic-release (dry-run) to determine the next version
+        // based on commit history, without creating any tags or commits.
         // ================================================================
         stage('Generate Version') {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
-                script {
-                    // Read current version and bump patch
-                    if (!fileExists('version.txt')) {
-                        env.NEW_VERSION = '1.0.0'
-                    } else {
-                        def currentVersion = readFile('version.txt').trim()
-                        def parts = currentVersion.split('\\.')
-                        def major = parts[0]
-                        def minor = parts[1]
-                        def patch = parts[2].toInteger() + 1
-                        env.NEW_VERSION = "${major}.${minor}.${patch}"
-                    }
+                withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID, usernameVariable: 'GIT_USER', passwordVariable: 'GITHUB_TOKEN')]) {
+                    script {
+                        // Install semantic-release
+                        sh 'npm install --no-fund --no-audit'
 
-                    env.SHORT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                    env.IMAGE_TAG  = "${env.NEW_VERSION}-${env.SHORT_SHA}"
-                    env.GIT_TAG    = "v${env.NEW_VERSION}"
+                        // Run semantic-release in dry-run mode to generate .version file
+                        sh 'npx semantic-release --dry-run'
 
-                    echo "Planned release: ${env.GIT_TAG}  (image tag: ${env.IMAGE_TAG})"
+                        if (!fileExists('.version')) {
+                            echo "No new release required based on commit history. Stopping deployment gracefully."
+                            currentBuild.result = 'SUCCESS'
+                            error("No release required. (This is a graceful exit, not an error).")
+                        }
 
-                    // Abort early if the tag already exists in the remote
-                    def tagExists = sh(
-                        script: "git ls-remote --tags origin ${env.GIT_TAG} | grep -c ${env.GIT_TAG} || true",
-                        returnStdout: true
-                    ).trim()
-                    if (tagExists != '0' && tagExists != '') {
-                        error("Git tag ${env.GIT_TAG} already exists on origin. Aborting to prevent overwrite.")
+                        env.NEW_VERSION = readFile('.version').trim()
+                        env.SHORT_SHA   = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                        env.IMAGE_TAG   = "${env.NEW_VERSION}-${env.SHORT_SHA}"
+                        env.GIT_TAG     = "v${env.NEW_VERSION}"
+
+                        echo "Planned release: ${env.GIT_TAG}  (image tag: ${env.IMAGE_TAG})"
                     }
                 }
             }
@@ -266,58 +256,18 @@ pipeline {
         }
 
         // ================================================================
-        // STAGE 7 — COMMIT VERSION.TXT  [Main Only]
+        // STAGE 7 — PUBLISH RELEASE  [Main Only]
         // Only reached after Kaniko AND GitOps both succeeded.
         //
-        // Writes NEW_VERSION into version.txt, commits it, and pushes to
-        // the source repository main branch.
-        //
-        // The [skip ci] marker prevents Jenkins from triggering another
-        // build for this automation commit.
+        // Runs semantic-release for real. This will create the GitHub
+        // release, push the Git tag, and generate release notes.
+        // It DOES NOT commit anything to the source code repository.
         // ================================================================
-        stage('Commit version.txt') {
+        stage('Publish Release') {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
-                withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID, usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
-                    script {
-                        writeFile file: 'version.txt', text: env.NEW_VERSION
-                        sh """
-                            git config --global user.email "jenkins@nitte.edu"
-                            git config --global user.name  "Jenkins Automation"
-
-                            REPO_URL=\$(git config remote.origin.url | sed -e 's/.*github.com[:\\/]//' -e 's/\\.git\$//')
-                            git remote set-url origin "https://${GIT_USER}:${GIT_PASS}@github.com/\${REPO_URL}.git"
-
-                            git add version.txt
-                            git commit -m "chore: bump version to ${env.GIT_TAG} [skip ci]"
-                            git push origin HEAD:main
-                        """
-                    }
-                }
-            }
-        }
-
-        // ================================================================
-        // STAGE 8 — PUSH GIT TAG  [Main Only]
-        // Only reached after version.txt is successfully committed.
-        //
-        // Creates and pushes the annotated release tag (vX.Y.Z).
-        // This is the FINAL step of a successful release.
-        // ================================================================
-        stage('Push Git Tag') {
-            when { expression { env.IS_MAIN == 'true' } }
-            steps {
-                withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID, usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
-                    sh """
-                        git config --global user.email "jenkins@nitte.edu"
-                        git config --global user.name  "Jenkins Automation"
-
-                        REPO_URL=\$(git config remote.origin.url | sed -e 's/.*github.com[:\\/]//' -e 's/\\.git\$//')
-                        git remote set-url origin "https://${GIT_USER}:${GIT_PASS}@github.com/\${REPO_URL}.git"
-
-                        git tag ${env.GIT_TAG}
-                        git push origin ${env.GIT_TAG}
-                    """
+                withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID, usernameVariable: 'GIT_USER', passwordVariable: 'GITHUB_TOKEN')]) {
+                    sh 'npx semantic-release'
                 }
             }
         }
