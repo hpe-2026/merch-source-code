@@ -41,6 +41,7 @@ pipeline {
                     checkout scm
                     
                     // Dynamically get the email of the developer who made the commit
+                    sh 'git config --global --add safe.directory "*"'
                     env.COMMIT_AUTHOR_EMAIL = sh(script: "git log -1 --pretty=format:'%ae'", returnStdout: true).trim()
                 }
             }
