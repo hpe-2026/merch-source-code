@@ -181,34 +181,16 @@ pipeline {
         }
 
         // ================================================================
-        // STAGE 4 — GENERATE VERSION  [Main Only]
-        // Uses semantic-release (dry-run) to determine the next version
-        // based on commit history, without creating any tags or commits.
+        // STAGE 4 — GENERATE IMAGE TAG  [Main Only]
+        // Generates the image tag using the short Git SHA.
         // ================================================================
-        stage('Generate Version') {
+        stage('Generate Image Tag') {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
-                withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID, usernameVariable: 'GIT_USER', passwordVariable: 'GITHUB_TOKEN')]) {
-                    script {
-                        // Install semantic-release
-                        sh 'npm install --no-fund --no-audit'
-
-                        // Run semantic-release in dry-run mode to generate .version file
-                        sh 'npx semantic-release --dry-run'
-
-                        if (!fileExists('.version')) {
-                            echo "No new release required based on commit history. Stopping deployment gracefully."
-                            currentBuild.result = 'SUCCESS'
-                            error("No release required. (This is a graceful exit, not an error).")
-                        }
-
-                        env.NEW_VERSION = readFile('.version').trim()
-                        env.SHORT_SHA   = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                        env.IMAGE_TAG   = "${env.NEW_VERSION}-${env.SHORT_SHA}"
-                        env.GIT_TAG     = "v${env.NEW_VERSION}"
-
-                        echo "Planned release: ${env.GIT_TAG}  (image tag: ${env.IMAGE_TAG})"
-                    }
+                script {
+                    env.SHORT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = "${env.SHORT_SHA}"
+                    echo "Planned image tag: ${env.IMAGE_TAG}"
                 }
             }
         }
@@ -276,29 +258,14 @@ pipeline {
                     sh """
                         cd ${env.CONFIG_REPO_DIR}
                         git add .
-                        git commit -m "chore: deploy release ${env.GIT_TAG}" || true
+                        git commit -m "chore: deploy commit ${env.IMAGE_TAG}" || true
                         git push origin main
                     """
                 }
             }
         }
 
-        // ================================================================
-        // STAGE 7 — PUBLISH RELEASE  [Main Only]
-        // Only reached after Kaniko AND GitOps both succeeded.
-        //
-        // Runs semantic-release for real. This will create the GitHub
-        // release, push the Git tag, and generate release notes.
-        // It DOES NOT commit anything to the source code repository.
-        // ================================================================
-        stage('Publish Release') {
-            when { expression { env.IS_MAIN == 'true' } }
-            steps {
-                withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID, usernameVariable: 'GIT_USER', passwordVariable: 'GITHUB_TOKEN')]) {
-                    sh 'npx semantic-release'
-                }
-            }
-        }
+
 
     }
 
@@ -313,8 +280,8 @@ pipeline {
                              body: "Your PR passed all CI checks!\n\n${env.BUILD_URL}",
                              to: env.COMMIT_AUTHOR_EMAIL
                 } else {
-                    emailext subject: "SUCCESS: Deployment ${env.GIT_TAG} #${env.BUILD_NUMBER}",
-                             body: "Release ${env.GIT_TAG} — services (${env.SERVICES_TO_BUILD}) built and deployed.\n\nImage tag: ${env.IMAGE_TAG}\n\n${env.BUILD_URL}",
+                    emailext subject: "SUCCESS: Deployment #${env.BUILD_NUMBER}",
+                             body: "Services (${env.SERVICES_TO_BUILD}) built and deployed.\n\nImage tag: ${env.IMAGE_TAG}\n\n${env.BUILD_URL}",
                              to: "${env.OWNER_EMAIL},${env.COMMIT_AUTHOR_EMAIL}"
                 }
             }
