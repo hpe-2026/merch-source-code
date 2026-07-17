@@ -1,7 +1,7 @@
 # Build stage
 # Using node:18-alpine to match all other frontend services in this project.
 # node:20 was previously used here inconsistently.
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
