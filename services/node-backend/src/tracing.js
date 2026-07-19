@@ -2,7 +2,7 @@ import { NodeSDK } from '@opentelemetry/sdk-node';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import pkgResources from '@opentelemetry/resources';
-const { Resource } = pkgResources;
+const { resourceFromAttributes } = pkgResources;
 import pkgSemConv from '@opentelemetry/semantic-conventions';
 const { SemanticResourceAttributes } = pkgSemConv;
 import otelApi from '@opentelemetry/api';
@@ -17,7 +17,7 @@ const traceExporter = new OTLPTraceExporter({
 
 // Create SDK
 const sdk = new NodeSDK({
-  resource: new Resource({
+  resource: resourceFromAttributes({
     [SemanticResourceAttributes.SERVICE_NAME]: 'nitte-api-gateway',
     [SemanticResourceAttributes.SERVICE_VERSION]: '1.0.0',
   }),
