@@ -54,11 +54,15 @@ export function setKeycloakSubjectInBaggage(keycloakSubjectId, userEmail, userRo
  * Get Keycloak Subject ID from baggage for correlation
  */
 export function getKeycloakSubjectFromBaggage() {
-  const currentBaggage = baggage.getBaggage();
-  if (!currentBaggage) return null;
+  try {
+    const currentBaggage = baggage.getBaggage(context.active());
+    if (!currentBaggage) return null;
 
-  const entry = currentBaggage.getEntry('keycloak.subject_id');
-  return entry?.value || null;
+    const entry = currentBaggage.getEntry('keycloak.subject_id');
+    return entry?.value || null;
+  } catch (e) {
+    return null;
+  }
 }
 
 /**
