@@ -1,8 +1,10 @@
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { Resource } from '@opentelemetry/resources';
-import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
+import pkgResources from '@opentelemetry/resources';
+const { Resource } = pkgResources;
+import pkgSemConv from '@opentelemetry/semantic-conventions';
+const { SemanticResourceAttributes } = pkgSemConv;
 import otelApi from '@opentelemetry/api';
 import logger from './config/logger.js';
 
