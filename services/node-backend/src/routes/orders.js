@@ -227,12 +227,14 @@ router.post(
       let merchantIds = [];
       let itemsWithPrice = req.body.items;
       try {
-        const { ObjectId } = await import('mongodb');
+        const mongoose = await import('mongoose');
+        const ObjectId = mongoose.default.Types.ObjectId;
+        const objectIds = productIds
+          .filter(id => ObjectId.isValid(id))
+          .map(id => new ObjectId(id));
+        
         const products = await db.collection('products').find({
-          $or: [
-            { _id: { $in: productIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id)) } },
-            { _id: { $in: productIds } },
-          ]
+          _id: { $in: objectIds }
         }).project({ merchant_id: 1, price: 1 }).toArray();
         merchantIds = [...new Set(products.map(p => p.merchant_id).filter(Boolean))];
         
