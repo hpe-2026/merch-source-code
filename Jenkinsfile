@@ -24,20 +24,12 @@ pipeline {
     }
 
     environment {
-        // The single entry point for our internal images
         NEXUS_REGISTRY = '192.168.56.10:30082'
         CONFIG_REPO_DIR = 'hpe-merch-config'
         GITHUB_CRED_ID = 'github-pat'
-        OWNER_EMAIL = 'nittemerchandise@gmail.com'
     }
 
     stages {
-
-        // ================================================================
-        // STAGE 1 — CHECKOUT & SETUP
-        // Runs for both PR builds and main merges.
-        // Guards against infinite loops caused by Jenkins automation commits.
-        // ================================================================
         stage('Checkout & Setup') {
             steps {
                 script {
@@ -47,30 +39,14 @@ pipeline {
                     checkout scm
 
                     sh 'git config --global --add safe.directory "*"'
-
-                    def commitMsg    = sh(script: 'git log -1 --pretty=%B || true', returnStdout: true).trim()
-                    def commitAuthor = sh(script: 'git log -1 --pretty=format:"%an" || true', returnStdout: true).trim()
-
-                    if (commitMsg.contains('[skip ci]') || commitAuthor == 'Jenkins Automation') {
-                        currentBuild.result = 'NOT_BUILT'
-                        error("Skipping build: Detected automated Jenkins commit to prevent loop.")
-                    }
                 }
             }
         }
 
-        // ================================================================
-        // STAGE 2 — DETECT CHANGED SERVICES
-        // Runs for both PR builds and main merges.
-        // Computes SERVICES_TO_BUILD by diffing against the target branch.
-        // Falls back to all services if no service-specific changes are found.
-        // ================================================================
         stage('Detect Changed Services') {
             steps {
                 script {
                     def changedSet = [] as Set
-                    def targetRef  = env.IS_PR == 'true' ? "origin/${env.CHANGE_TARGET}" : "origin/main"
-
                     def fetchBranch = env.IS_PR == 'true' ? env.CHANGE_TARGET : 'main'
                     sh "git fetch origin +refs/heads/${fetchBranch}:refs/remotes/origin/${fetchBranch} --depth=200 || true"
 
@@ -79,7 +55,6 @@ pipeline {
                         def mergeBase = sh(script: "git merge-base origin/${fetchBranch} HEAD || echo HEAD", returnStdout: true).trim()
                         diffOut = sh(script: "git diff --name-only ${mergeBase}...HEAD || true", returnStdout: true).trim()
                     } else {
-                        // On main, diff against the previous commit to see what just merged
                         diffOut = sh(script: "git diff --name-only HEAD~1...HEAD || true", returnStdout: true).trim()
                     }
 
@@ -104,16 +79,6 @@ pipeline {
             }
         }
 
-        // ================================================================
-        // STAGE 3 — LINT & UNIT TEST
-        // Runs for BOTH PR builds and main merges.
-        //
-        // PR builds stop here — no images are built, no tags are created,
-        // no version.txt is modified, no GitOps repository is touched.
-        //
-        // For Node services Vitest is detected automatically (no --ci flag).
-        // For Python services pytest is used with --junitxml output.
-        // ================================================================
         stage('Lint & Unit Test') {
             steps {
                 script {
@@ -127,7 +92,6 @@ pipeline {
                                         npm ci --prefer-offline --legacy-peer-deps
                                         npm run lint --if-present || true
 
-                                        # Vitest does not accept --ci flag
                                         if grep -q '"vitest"' package.json; then
                                             npm test
                                         else
@@ -152,17 +116,11 @@ pipeline {
             }
             post {
                 always {
-                    // Parse JUnit XML results for the visual test report dashboard
                     junit allowEmptyResults: true, testResults: '**/test-results.xml,**/junit.xml'
                 }
             }
         }
 
-        // ================================================================
-        // STAGE 3.5 — SECURITY SCAN (TRIVY)
-        // Runs for both PR builds and main merges.
-        // Scans the files of changed services for vulnerabilities.
-        // ================================================================
         stage('Security Scan (Trivy)') {
             steps {
                 script {
@@ -170,8 +128,6 @@ pipeline {
                         def svcPath = ALL_SERVICES[svc.trim()]
                         container('security') {
                             echo "Running Trivy FS scan on ${svc}"
-                            // Scan the filesystem for HIGH and CRITICAL vulnerabilities
-                            // Returns non-zero exit code if vulnerabilities are found, failing the build
                             sh "trivy fs --severity HIGH,CRITICAL --exit-code 1 --no-progress ${svcPath}"
                         }
                     }
@@ -179,29 +135,16 @@ pipeline {
             }
         }
 
-        // ================================================================
-        // STAGE 4 — GENERATE IMAGE TAG  [Main Only]
-        // Generates the image tag using the short Git SHA.
-        // ================================================================
         stage('Generate Image Tag') {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
                 script {
-                    env.SHORT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                    env.IMAGE_TAG = "${env.SHORT_SHA}"
+                    env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     echo "Planned image tag: ${env.IMAGE_TAG}"
                 }
             }
         }
 
-        // ================================================================
-        // STAGE 5 — KANIKO BUILD & PUSH  [Main Only]
-        // Builds and pushes Docker images for all changed services.
-        //
-        // If ANY build or push fails the stage fails immediately, and
-        // the Declarative Pipeline will not proceed to later stages.
-        // version.txt and Git tags are therefore never touched.
-        // ================================================================
         stage('Kaniko Build & Push') {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
@@ -227,14 +170,6 @@ pipeline {
             }
         }
 
-        // ================================================================
-        // STAGE 6 — GITOPS CONFIG UPDATE  [Main Only]
-        // Clones hpe-merch-config, patches the image newTag for every
-        // changed service in downstream-clusters/base/kustomization.yaml,
-        // commits and pushes the config repository.
-        //
-        // If this stage fails, version.txt and Git tags are NOT modified.
-        // ================================================================
         stage('GitOps Config Update') {
             when { expression { env.IS_MAIN == 'true' } }
             steps {
@@ -263,9 +198,6 @@ pipeline {
                 }
             }
         }
-
-
-
     }
 
     post {
