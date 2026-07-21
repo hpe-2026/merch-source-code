@@ -137,7 +137,7 @@ const Landing = ({ onLoginSuccess }) => {
           <h1 className="mt-5 text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 leading-[1.1]">
             Wear your <span className="text-indigo-600">legacy.</span>
             <br />
-            Carry the brand of NITTE.
+            Carry the branding of NITTE.
           </h1>
           <p className="mt-5 text-lg text-slate-600 max-w-xl leading-relaxed">
             Premium merchandise crafted for the NITTE alumni community —
